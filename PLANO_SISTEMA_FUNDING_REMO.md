@@ -1,21 +1,28 @@
 # Sistema de Funding — Remo
 
-Plano do projeto consolidado com a alteração de infraestrutura autorizada em
-24/07/2026. Todas as decisões do plano original permanecem válidas, exceto a
-obrigatoriedade de Docker, WSL e PostgreSQL local na Fase 0.
+Plano do projeto consolidado com as alterações de infraestrutura autorizadas
+em 24/07/2026 e a correção de fontes de dados autorizada em 30/07/2026. Todas
+as demais decisões do plano original permanecem válidas.
 
 ---
 
 ## 1. Visão geral
 
 A Remo é uma financeira de empréstimo pessoal. A operação de crédito
-(clientes, contratos, parcelas, pagamentos) roda e continuará rodando em
-**Excel** (`Funding_Remo.xlsm`), que é a fonte da verdade. O sistema novo é uma
-camada por cima do Excel, responsável por:
+(clientes, contratos, empréstimos, parcelas e pagamentos) roda e continuará
+rodando no arquivo Excel operacional **Cadastro de Clientes**, atualmente
+disponível em uma pasta local sincronizada pelo OneDrive. Esse arquivo é a
+fonte da verdade dos dados operacionais existentes.
 
-1. **Ler e espelhar** os dados do Excel em um banco de dados limpo e
-   normalizado (fluxo de mão única, somente leitura — o sistema nunca escreve
-   no Excel).
+O arquivo **Funding Remo.xlsm** é exclusivamente um modelo legado de
+referência funcional e reconciliação. Ele não é fonte operacional, não será
+importado e não será sincronizado com o PostgreSQL.
+
+O sistema novo é responsável por:
+
+1. **Ler e espelhar** os dados operacionais do arquivo Cadastro de Clientes em
+   um banco de dados limpo e normalizado (fluxo de mão única, somente leitura —
+   o sistema nunca escreve no Excel).
 2. **Gerir o funding**: investidores, aportes, rateio do capital entre
    contratos (sem o limite atual de 4 partes), remuneração mensal, PJR,
    reinvestimento e tesouraria.
@@ -23,8 +30,21 @@ camada por cima do Excel, responsável por:
    receita, inadimplência, PDD e retorno por investidor.
 
 A conexão automática com o SharePoint/OneDrive (Microsoft Graph) fica para uma
-fase posterior. Na fase inicial, o sistema lê uma cópia local do arquivo, mas a
+fase posterior. Na fase inicial, o sistema lê uma cópia local do Cadastro de
+Clientes a partir do caminho configurado em `OPERATIONAL_EXCEL_PATH`, mas a
 origem do arquivo é uma peça trocável da arquitetura.
+
+### Divisão oficial das fontes
+
+1. **Cadastro de Clientes (Excel operacional):** fonte da verdade para
+   clientes, contratos, empréstimos, amortizações e demais dados operacionais
+   existentes. É a única planilha que o `FileSource` poderá importar e
+   sincronizar.
+2. **PostgreSQL Supabase:** fonte da verdade para os dados próprios do novo
+   sistema de funding, incluindo investidores canônicos, aportes, alocações,
+   remunerações, PJR, reinvestimentos e movimentos de tesouraria.
+3. **Funding Remo.xlsm:** referência funcional do modelo legado, fórmulas e
+   reconciliação. Nunca importar, espelhar ou sincronizar.
 
 ---
 
@@ -62,8 +82,8 @@ origem do arquivo é uma peça trocável da arquitetura.
 
 ```text
 ┌────────────────────┐
-│  Excel (.xlsm)     │  ← fonte da verdade (operado pela equipe)
-│  Funding_Remo      │
+│ Cadastro de        │  ← fonte da verdade operacional
+│ Clientes (Excel)   │     caminho em OPERATIONAL_EXCEL_PATH
 └─────────┬──────────┘
           │  somente leitura
           ▼
@@ -75,8 +95,8 @@ origem do arquivo é uma peça trocável da arquitetura.
 └─────────┬──────────┘
           ▼
 ┌────────────────────┐
-│ PostgreSQL         │  Supabase gerenciado
-│ (somente backend)  │  espelho normalizado + funding
+│ PostgreSQL         │  Supabase gerenciado:
+│ (somente backend)  │  espelho operacional + funding próprio
 └─────────┬──────────┘
           ▼
 ┌────────────────────┐
@@ -87,12 +107,19 @@ origem do arquivo é uma peça trocável da arquitetura.
 ┌────────────────────┐
 │  Frontend (React)  │  nunca acessa o PostgreSQL diretamente
 └────────────────────┘
+
+┌────────────────────┐
+│ Funding Remo.xlsm  │  referência legada e reconciliação
+│ NÃO sincronizar    │  sem fluxo de importação para o banco
+└────────────────────┘
 ```
 
 ### Regras de ouro
 
-- **Excel é intocável.** O sistema nunca escreve nele. Sempre copiar o arquivo
-  antes de ler.
+- **Excel operacional é intocável.** O sistema nunca escreve no Cadastro de
+  Clientes. Sempre copiar o arquivo antes de ler.
+- **O legado não é fonte.** `Funding Remo.xlsm` nunca é importado, espelhado ou
+  sincronizado; seu diagnóstico serve apenas de referência funcional.
 - **Origem do arquivo é plugável.** Todo o código conversa com uma interface
   `FileSource`; trocar de pasta local para SharePoint não altera nada além do
   conector.
@@ -103,6 +130,9 @@ origem do arquivo é uma peça trocável da arquitetura.
   de inconsistências e o restante segue.
 - **Credenciais ficam fora do código.** O banco é configurado exclusivamente
   por `DATABASE_URL` no `.env` local ou no ambiente seguro de implantação.
+- **Caminho operacional fica fora do código.** O caminho real do Cadastro de
+  Clientes existe exclusivamente em `OPERATIONAL_EXCEL_PATH` no `.env` local
+  ou no ambiente seguro de implantação.
 
 ---
 
@@ -113,6 +143,8 @@ funding/
 ├── PLANO_SISTEMA_FUNDING_REMO.md
 ├── CLAUDE.md
 ├── README.md
+├── DIAGNOSTICO_MODELO_LEGADO_FUNDING.md
+├── FASE_1A_DIAGNOSTICO_CADASTRO_CLIENTES.md
 ├── .env.example
 ├── backend/
 │   ├── app/
@@ -150,7 +182,7 @@ pré-requisitos nem bloqueia qualquer fase.
 
 ## 5. Modelo de dados (núcleo)
 
-### Espelho do Excel (recarregado a cada sync)
+### Espelho do Cadastro de Clientes (recarregado a cada sync)
 
 - **clientes** — cod_cliente, cpf normalizado e único, nome canônico,
   data_nasc, rating.
@@ -172,6 +204,8 @@ pré-requisitos nem bloqueia qualquer fase.
 - **sync_log** — registro de cada sincronização.
 
 As tabelas deste modelo são implementadas somente nas fases correspondentes.
+Os dados próprios de funding nunca são recarregados a partir de
+`Funding Remo.xlsm`.
 
 ---
 
@@ -197,14 +231,64 @@ rateio, remuneração, tesouraria, dashboards ou autenticação.
 **Entrega:** fundação completa rodando sem dependência obrigatória de Docker,
 WSL, virtualização, PostgreSQL ou `psql` local.
 
-### Fase 1 — Conector Excel + espelho
+### Fase 1A — Diagnóstico do Cadastro de Clientes
 
-- Implementar `FileSource` e `LocalFileSource` lendo uma cópia em
-  `data/input/`.
-- Ler as abas previstas no plano original.
+- Exigir `OPERATIONAL_EXCEL_PATH` configurado exclusivamente no `.env` local.
+- Confirmar que o arquivo está disponível localmente sem exibir o caminho real
+  ou qualquer conteúdo sensível.
+- Copiar o arquivo para uma área temporária única e analisar somente a cópia.
+- Identificar arquivo, hash, abas, cabeçalhos, colunas, tipos, fórmulas,
+  chaves, relacionamentos, inconsistências e diferenças em relação ao plano.
+- Analisar especialmente `BCLI_CADASTRO`, `DFEN_CONTRATO`,
+  `ECON_EMPRESTIMOS`, `ECON_AMORTIZACOES` e demais abas operacionais.
+- Entregar `FASE_1A_DIAGNOSTICO_CADASTRO_CLIENTES.md`.
+
+**Limite:** não acessar o Supabase, criar migrations nem implementar
+`FileSource`, reader, cleaner ou sincronização definitiva.
+
+**Status:** concluída e aprovada. O relatório técnico permanece em
+`FASE_1A_DIAGNOSTICO_CADASTRO_CLIENTES.md`.
+
+### Etapa intermediária — Protótipo visual funcional do funding
+
+Por alteração autorizada na ordem do projeto, esta etapa ocorre depois da
+Fase 1A e antes da Fase 1B. A integração operacional fica adiada.
+
+- Construir a experiência visual completa com React 18, TypeScript, Vite,
+  Tailwind, componentes shadcn/ui e Recharts.
+- Usar exclusivamente dados fictícios, controlados e identificados como
+  demonstrativos.
+- Criar providers substituíveis para dashboard, investidores, aportes,
+  alocações, tesouraria e contratos operacionais.
+- Implementar inicialmente somente providers mockados; as páginas não acessam
+  os mocks diretamente.
+- Criar shell administrativo responsivo, tema escuro padrão e tema claro.
+- Criar as rotas de dashboard, investidores, aportes, rateio, contratos,
+  tesouraria, relatórios, sincronização e configurações.
+- Permitir simulações apenas no estado local da sessão.
+- Preservar dinheiro como strings decimais ou centavos inteiros; não usar
+  `float` em regras financeiras.
+
+**Limite:** não ler ou copiar Excel, implementar `FileSource`, sincronizar,
+criar tabelas-espelho, criar migrations operacionais, usar dados pessoais reais,
+gravar no Supabase ou implementar cálculos financeiros definitivos.
+
+**Fontes preservadas:** Cadastro de Clientes continua sendo a futura fonte
+operacional; Supabase continua sendo a fonte futura dos dados próprios do
+funding; `Funding Remo.xlsm` continua somente como referência legada.
+
+### Fase 1B — Conector Excel + espelho
+
+- Fase adiada. Não iniciar durante o protótipo visual.
+- Quando retomada, exigir nova autorização expressa além da aprovação do
+  diagnóstico da Fase 1A.
+- Implementar `FileSource` e `LocalFileSource` lendo uma cópia do arquivo
+  indicado por `OPERATIONAL_EXCEL_PATH`.
+- Ler somente as abas operacionais comprovadas no novo diagnóstico.
 - Normalizar CPF, nomes e datas; enviar valores inválidos e `#VALUE!` para a
   fila de inconsistências.
 - Sincronizar manualmente e registrar em `sync_log`.
+- Nunca ler, importar ou sincronizar `Funding Remo.xlsm`.
 
 ### Fase 2 — API + primeiras telas
 
@@ -245,12 +329,14 @@ WSL, virtualização, PostgreSQL ou `psql` local.
 
 | Risco | Mitigação |
 |---|---|
-| Equipe altera o layout do Excel | Validar layout e alertar sem falhar silenciosamente. |
-| Arquivo aberto durante leitura | Copiar antes de ler. |
+| Equipe altera o layout do Cadastro de Clientes | Validar layout e alertar sem falhar silenciosamente. |
+| Arquivo operacional aberto durante leitura | Copiar antes de ler. |
 | Fórmulas com cache desatualizado | Exibir data/hora do arquivo lido. |
 | Dados sujos | Fila de inconsistências. |
 | Erro de centavos | `Decimal`/`NUMERIC(14,2)` e testes. |
 | Credencial do Supabase exposta | `.env` ignorado pelo Git, `.env.example` sem segredo e backend como único consumidor. |
+| Caminho do arquivo exposto ou fixo | `OPERATIONAL_EXCEL_PATH` somente no `.env` local; nunca registrar o valor real em logs ou Git. |
+| Legado importado por engano | Bloquear `Funding Remo.xlsm` como fonte e manter seu uso somente para reconciliação. |
 | Banco remoto indisponível | `/health` retorna estado da API e do banco sem expor detalhes internos. |
 | Rede sem IPv6 | Usar Session pooler do Supabase em porta 5432. |
 
@@ -261,4 +347,3 @@ WSL, virtualização, PostgreSQL ou `psql` local.
 Os comandos oficiais e atualizados estão no `README.md`. Nenhum comando da
 Fase 0 depende de Docker, WSL, PostgreSQL local ou sintaxe exclusiva de
 PowerShell.
-
