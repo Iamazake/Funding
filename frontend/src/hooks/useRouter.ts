@@ -9,10 +9,11 @@ export function useRouter() {
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
-  const navigate = useCallback((nextPath: string) => {
-    if (nextPath === window.location.pathname) return;
-    window.history.pushState({}, "", nextPath);
-    setPath(nextPath);
+  const navigate = useCallback((nextPath: string, replace = false) => {
+    const nextUrl = new URL(nextPath, window.location.origin);
+    if (nextUrl.pathname === window.location.pathname && nextUrl.search === window.location.search) return;
+    window.history[replace ? "replaceState" : "pushState"]({}, "", nextPath);
+    setPath(nextUrl.pathname);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
 

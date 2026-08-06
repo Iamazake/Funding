@@ -1,7 +1,7 @@
 import {
-  BarChart3, Bell, ChevronLeft, ChevronRight, CircleDollarSign, FileChartColumn,
-  Gauge, Landmark, Menu, Moon, PanelLeftClose, Search, Settings, Shuffle,
-  Sun, Users, WalletCards, X,
+  BarChart3, Bell, ChevronDown, ChevronRight, CircleDollarSign, FileText, Gauge,
+  Clock3, Landmark, Layers3, Menu, Moon, ReceiptText, RefreshCcw, Search, Settings, Sun, Users,
+  WalletCards, X, type LucideIcon,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
@@ -11,63 +11,65 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
-interface AdminShellProps { path: string; navigate: (path: string) => void; children: ReactNode; }
+interface NavItem { path: string; label: string; icon: LucideIcon; }
+interface NavGroup { label?: string; items: NavItem[]; }
 
-const navItems = [
-  { path: "/dashboard", label: "Dashboard", icon: Gauge },
-  { path: "/investidores", label: "Investidores", icon: Users },
-  { path: "/aportes", label: "Aportes", icon: WalletCards },
-  { path: "/rateio", label: "Rateio", icon: Shuffle },
-  { path: "/contratos", label: "Contratos", icon: FileChartColumn },
-  { path: "/tesouraria", label: "Tesouraria", icon: Landmark },
-  { path: "/relatorios", label: "Relatórios", icon: BarChart3 },
-  { path: "/sincronizacao", label: "Sincronização", icon: CircleDollarSign },
-  { path: "/configuracoes", label: "Configurações", icon: Settings },
+const navGroups: NavGroup[] = [
+  { items: [{ path: "/dashboard", label: "Dashboard", icon: Gauge }] },
+  { label: "Cadastro", items: [
+    { path: "/cadastro/investidores", label: "Investidores", icon: Users },
+    { path: "/cadastro/aportes", label: "Aportes", icon: WalletCards },
+    { path: "/cadastro/remuneracoes", label: "Remuneração de Capital", icon: CircleDollarSign },
+  ] },
+  { label: "Contratos", items: [
+    { path: "/contratos", label: "Contratos", icon: FileText },
+    { path: "/contratos/composicao", label: "Composição do funding", icon: Layers3 },
+    { path: "/contratos/alocacoes", label: "Alocações", icon: WalletCards },
+    { path: "/contratos/divergencias", label: "Divergências", icon: RefreshCcw },
+  ] },
+  { label: "Receita", items: [
+    { path: "/receita", label: "Recebimentos", icon: ReceiptText },
+    { path: "/receita/pendencias", label: "Pendências", icon: Clock3 },
+    { path: "/receita/divergencias", label: "Divergências", icon: RefreshCcw },
+    { path: "/receita/resumo-mensal", label: "Resumo mensal", icon: BarChart3 },
+  ] },
+  { label: "Tesouraria", items: [
+    { path: "/tesouraria", label: "Visão geral", icon: Landmark },
+    { path: "/tesouraria/entradas", label: "Entradas", icon: CircleDollarSign },
+    { path: "/tesouraria/saidas", label: "Saídas", icon: WalletCards },
+    { path: "/tesouraria/remuneracoes", label: "Remunerações", icon: CircleDollarSign },
+    { path: "/tesouraria/conciliacao", label: "Conciliação", icon: Gauge },
+    { path: "/tesouraria/divergencias", label: "Divergências", icon: RefreshCcw },
+  ] },
+  { items: [{ path: "/relatorios", label: "Relatórios", icon: BarChart3 }] },
+  { items: [{ path: "/sincronizacao", label: "Sincronização", icon: RefreshCcw }] },
+  { items: [{ path: "/configuracoes", label: "Configurações", icon: Settings }] },
 ];
 
-const labelByPath = Object.fromEntries(navItems.map((item) => [item.path, item.label]));
-
-function Breadcrumbs({ path, navigate }: { path: string; navigate: (path: string) => void }) {
-  const segments = path.split("/").filter(Boolean);
-  const rootPath = `/${segments[0] ?? "dashboard"}`;
-  const rootLabel = labelByPath[rootPath] ?? "Dashboard";
-  return <nav aria-label="Navegação estrutural" className="flex items-center gap-1.5 text-xs text-muted-foreground"><AppLink to={rootPath} onNavigate={navigate} className="transition hover:text-foreground">{rootLabel}</AppLink>{segments.length > 1 && <><ChevronRight className="size-3.5" /><span className="text-foreground">Detalhe demonstrativo</span></>}</nav>;
+const allItems = navGroups.flatMap((group) => group.items);
+function isActive(path: string, itemPath: string) {
+  if (itemPath === "/receita") return path === itemPath || (/^\/receita\/[^/]+$/.test(path) && !["/receita/pendencias", "/receita/divergencias", "/receita/resumo-mensal"].includes(path));
+  if (["/contratos", "/tesouraria"].includes(itemPath)) return path === itemPath;
+  return path === itemPath || path.startsWith(`${itemPath}/`);
 }
 
-export function AdminShell({ path, navigate, children }: AdminShellProps) {
-  const [collapsed, setCollapsed] = useState(false);
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const [theme, setTheme] = useState<"dark" | "light">(() => localStorage.getItem("remo-theme") === "light" ? "light" : "dark");
+function NavEntry({ item, path, navigate }: { item: NavItem; path: string; navigate: (path: string) => void }) {
+  const Icon = item.icon; const active = isActive(path, item.path);
+  return <AppLink to={item.path} onNavigate={navigate} className={cn("flex h-10 items-center rounded-lg px-3 text-sm transition", active ? "bg-emerald-400/15 text-emerald-300" : "text-slate-400 hover:bg-white/5 hover:text-white")}><Icon className="size-4" /><span className="ml-3">{item.label}</span></AppLink>;
+}
 
-  useEffect(() => { document.documentElement.classList.toggle("dark", theme === "dark"); document.documentElement.dataset.theme = theme; localStorage.setItem("remo-theme", theme); }, [theme]);
-  useEffect(() => setMobileOpen(false), [path]);
+function Breadcrumbs({ path, navigate }: { path: string; navigate: (path: string) => void }) {
+  const root = path.startsWith("/cadastro") ? "Cadastro" : path.startsWith("/contratos") ? "Contratos" : path.startsWith("/receita") ? "Receita" : path.startsWith("/tesouraria") ? "Tesouraria" : undefined;
+  const exact = allItems.find((item) => isActive(path, item.path));
+  return <nav className="flex items-center gap-2 text-xs text-muted-foreground">{root && <><span>{root}</span><ChevronRight className="size-3" /></>}<AppLink to={exact?.path ?? "/dashboard"} onNavigate={navigate}>{exact?.label ?? "Detalhe"}</AppLink>{path.split("/").filter(Boolean).length > 2 && <><ChevronRight className="size-3" /><span>Detalhe</span></>}</nav>;
+}
 
-  const sidebar = <div className="flex h-full flex-col">
-    <div className={cn("flex h-20 items-center border-b border-border px-5", collapsed && "justify-center px-3")}>
-      <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-300 to-indigo-500 text-sm font-black text-slate-950">RF</div>
-      {!collapsed && <div className="ml-3"><p className="font-semibold tracking-tight">Remo Funding</p><p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Gestão de capital</p></div>}
-    </div>
-    <div className={cn("px-4 pt-5", collapsed && "px-2")}><Badge variant="warning" className={cn("w-full justify-center py-1.5", collapsed && "px-1 text-[9px]")}>{collapsed ? "DEMO" : "Ambiente demonstrativo"}</Badge></div>
-    <nav aria-label="Menu principal" className="mt-5 flex-1 space-y-1 overflow-y-auto px-3">{navItems.map(({ path: itemPath, label, icon: Icon }) => {
-      const active = path === itemPath || path.startsWith(`${itemPath}/`);
-      return <AppLink key={itemPath} to={itemPath} onNavigate={navigate} title={collapsed ? label : undefined} aria-current={active ? "page" : undefined} className={cn("group flex h-11 items-center rounded-xl px-3 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", active ? "bg-primary/12 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground", collapsed && "justify-center px-0")}><Icon className="size-[18px] shrink-0" />{!collapsed && <span className="ml-3">{label}</span>}</AppLink>;
-    })}</nav>
-    <div className="border-t border-border p-3"><button type="button" onClick={() => setCollapsed((value) => !value)} className="hidden h-10 w-full items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted hover:text-foreground lg:flex" aria-label={collapsed ? "Expandir menu" : "Recolher menu"}><PanelLeftClose className={cn("size-4 transition", collapsed && "rotate-180")} />{!collapsed && <span className="ml-2 text-xs">Recolher menu</span>}</button>{!collapsed && <div className="mt-2 rounded-xl bg-muted/50 p-3"><p className="text-xs font-medium">Dados 100% fictícios</p><p className="mt-1 text-[11px] leading-4 text-muted-foreground">Nenhuma operação é gravada no Supabase.</p></div>}</div>
-  </div>;
-
-  return <div className="min-h-screen bg-background text-foreground">
-    <aside className={cn("fixed inset-y-0 left-0 z-40 hidden border-r border-border bg-sidebar transition-[width] duration-200 lg:block", collapsed ? "w-[76px]" : "w-[252px]")}>{sidebar}</aside>
-    {mobileOpen && <div className="fixed inset-0 z-50 lg:hidden"><button className="absolute inset-0 bg-slate-950/75" onClick={() => setMobileOpen(false)} aria-label="Fechar menu" /><aside className="relative h-full w-[286px] border-r border-border bg-sidebar shadow-2xl">{sidebar}<Button className="absolute right-3 top-3" variant="ghost" size="icon" onClick={() => setMobileOpen(false)} aria-label="Fechar menu"><X className="size-5" /></Button></aside></div>}
-    <div className={cn("transition-[padding] duration-200", collapsed ? "lg:pl-[76px]" : "lg:pl-[252px]")}>
-      <header className="sticky top-0 z-30 flex h-20 items-center gap-3 border-b border-border bg-background/85 px-4 backdrop-blur-xl sm:px-6">
-        <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setMobileOpen(true)} aria-label="Abrir menu"><Menu className="size-5" /></Button>
-        <div className="min-w-0 flex-1"><Breadcrumbs path={path} navigate={navigate} /></div>
-        <label className="relative hidden w-full max-w-sm md:block"><Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><span className="sr-only">Busca global demonstrativa</span><Input className="pl-9" placeholder="Buscar investidores, aportes, contratos…" /></label>
-        <Button variant="ghost" size="icon" aria-label="Notificações demonstrativas" className="relative"><Bell className="size-5" /><span className="absolute right-2 top-2 size-2 rounded-full bg-primary" /></Button>
-        <Button variant="outline" size="icon" onClick={() => setTheme((value) => value === "dark" ? "light" : "dark")} aria-label={theme === "dark" ? "Ativar tema claro" : "Ativar tema escuro"}>{theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}</Button>
-      </header>
-      <main className="mx-auto max-w-[1600px] p-4 sm:p-6 lg:p-8">{children}</main>
-      <footer className="flex flex-col gap-2 border-t border-border px-6 py-5 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between"><span>Remo Funding · Protótipo visual funcional</span><span className="flex items-center gap-1"><ChevronLeft className="size-3" /> Sem Excel · Sem gravações · Somente mocks</span></footer>
-    </div>
-  </div>;
+export function AdminShell({ path, navigate, children }: { path: string; navigate: (path: string) => void; children: ReactNode }) {
+  const [mobile, setMobile] = useState(false);
+  const [theme, setTheme] = useState<"dark" | "light">(() => window.localStorage.getItem("remo-theme") === "light" ? "light" : "dark");
+  const [groups, setGroups] = useState<Record<string, boolean>>({ Cadastro: true, Contratos: true, Receita: true, Tesouraria: true });
+  useEffect(() => { document.documentElement.classList.toggle("dark", theme === "dark"); window.localStorage.setItem("remo-theme", theme); }, [theme]);
+  useEffect(() => setMobile(false), [path]);
+  const sidebar = <div className="flex h-full flex-col bg-[#071525] text-slate-100"><div className="flex h-20 items-center border-b border-white/10 px-5"><div className="flex size-10 items-center justify-center rounded-xl bg-emerald-400 font-black text-[#071525]">RF</div><div className="ml-3"><p className="font-semibold">Remo Funding</p><p className="text-[10px] uppercase tracking-widest text-slate-400">Gestão de capital</p></div></div><div className="px-4 pt-4"><Badge variant="warning" className="w-full justify-center py-1.5">Ambiente demonstrativo</Badge></div><nav className="mt-4 flex-1 space-y-1 overflow-y-auto px-3">{navGroups.map((group, index) => group.label ? <div key={group.label}><button type="button" onClick={() => setGroups((current) => ({ ...current, [group.label!]: current[group.label!] === false }))} className="flex h-9 w-full items-center px-3 text-xs font-semibold uppercase tracking-widest text-slate-500">{group.label}<ChevronDown className={cn("ml-auto size-3", groups[group.label] === false && "-rotate-90")} /></button>{groups[group.label] !== false && <div className="ml-2 space-y-1 border-l border-white/10 pl-2">{group.items.map((item) => <NavEntry key={item.path} item={item} path={path} navigate={navigate} />)}</div>}</div> : group.items.map((item) => <NavEntry key={`${index}-${item.path}`} item={item} path={path} navigate={navigate} />))}</nav><div className="border-t border-white/10 p-4 text-xs text-slate-400">Dados fictícios · localStorage<br />Sem Excel · Sem Supabase</div></div>;
+  return <div className="min-h-screen bg-background"><aside className="fixed inset-y-0 left-0 z-40 hidden w-[280px] lg:block">{sidebar}</aside>{mobile && <div className="fixed inset-0 z-50 lg:hidden"><button className="absolute inset-0 bg-black/70" onClick={() => setMobile(false)} /><aside className="relative h-full w-[300px]">{sidebar}<Button size="icon" variant="ghost" className="absolute right-2 top-2" onClick={() => setMobile(false)}><X className="size-5" /></Button></aside></div>}<div className="lg:pl-[280px]"><header className="sticky top-0 z-30 flex h-20 items-center gap-3 border-b bg-background/90 px-4 backdrop-blur sm:px-6"><Button size="icon" variant="ghost" className="lg:hidden" onClick={() => setMobile(true)}><Menu className="size-5" /></Button><div className="flex-1"><Breadcrumbs path={path} navigate={navigate} /></div><label className="relative hidden max-w-sm flex-1 md:block"><Search className="absolute left-3 top-3 size-4 text-muted-foreground" /><Input className="pl-9" placeholder="Buscar no ambiente demonstrativo…" /></label><Button size="icon" variant="ghost"><Bell className="size-5" /></Button><Button size="icon" variant="outline" onClick={() => setTheme((value) => value === "dark" ? "light" : "dark")}>{theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}</Button></header><main className="mx-auto max-w-[1680px] p-4 sm:p-6 lg:p-8">{children}</main><footer className="border-t px-6 py-5 text-xs text-muted-foreground">Remo Funding · Domínio demonstrativo · Sem integração real</footer></div></div>;
 }

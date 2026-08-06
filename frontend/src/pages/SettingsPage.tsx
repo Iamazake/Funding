@@ -1,24 +1,27 @@
-import { Database, Palette, Save, Settings2, ShieldCheck } from "lucide-react";
-import type { ReactNode } from "react";
+import { Database, Palette, RefreshCcw, Settings2, ShieldCheck } from "lucide-react";
+import { useState, type ReactNode } from "react";
 
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
+import { FeedbackBanner, type Feedback } from "@/components/common/FeedbackBanner";
 import { PageHeader } from "@/components/common/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { fundingRepository } from "@/services/fundingService";
 
 export function SettingsPage() {
-  return <div className="space-y-6"><PageHeader eyebrow="Preferências do protótipo" title="Configurações" description="Representação visual dos parâmetros futuros. Nenhuma regra definitiva é salva ou aplicada." actions={<Button disabled><Save className="size-4" />Salvar configurações</Button>} />
-    <div className="grid gap-5 xl:grid-cols-2"><SettingsCard icon={Settings2} title="Parâmetros gerais"><Field label="Nome do ambiente"><Input defaultValue="Ambiente demonstrativo" /></Field><Field label="Moeda"><Select defaultValue="BRL"><option value="BRL">Real brasileiro (BRL)</option></Select></Field><Field label="Fuso horário"><Select defaultValue="America/Sao_Paulo"><option value="America/Sao_Paulo">America/Sao_Paulo</option></Select></Field></SettingsCard>
-      <SettingsCard icon={ShieldCheck} title="Políticas financeiras"><SettingRow label="Política de arredondamento" value="A definir" /><SettingRow label="Parâmetros de PJR" value="A definir" /><SettingRow label="Precisão monetária" value="Decimal / NUMERIC(14,2)" /><p className="rounded-xl border border-amber-400/20 bg-amber-400/10 p-4 text-sm text-amber-300">Nenhuma fórmula financeira definitiva está implementada.</p></SettingsCard>
-      <SettingsCard icon={Palette} title="Preferências visuais"><Field label="Tema padrão"><Select defaultValue="dark"><option value="dark">Escuro</option><option value="light">Claro</option><option value="system">Sistema</option></Select></Field><Field label="Densidade de tabelas"><Select defaultValue="comfortable"><option value="comfortable">Confortável</option><option value="compact">Compacta</option></Select></Field><Field label="Formato de datas"><Input defaultValue="dd/mm/aaaa" disabled /></Field></SettingsCard>
-      <SettingsCard icon={Database} title="Origem operacional futura"><SettingRow label="Fonte" value="Cadastro de Clientes" /><SettingRow label="Integração local" value="LocalFileSource — futura" /><SettingRow label="Integração remota" value="SharePointSource — futura" /><SettingRow label="Status" value="Não configurada" /><Badge variant="neutral">Nenhum Excel lido</Badge></SettingsCard>
-    </div>
-    <Card className="bg-card/75"><CardHeader><CardTitle className="text-base">Status possíveis dos aportes</CardTitle></CardHeader><CardContent className="flex flex-wrap gap-3"><Badge variant="info">Disponível</Badge><Badge variant="warning">Parcialmente alocado</Badge><Badge variant="success">Alocado</Badge><Badge variant="neutral">Encerrado</Badge></CardContent></Card>
+  const [restoreOpen, setRestoreOpen] = useState(false);
+  const [feedback, setFeedback] = useState<Feedback | null>(null);
+  return <div className="space-y-6"><PageHeader eyebrow="Preferências" title="Configurações" description="Parâmetros do ambiente demonstrativo e restauração segura do conjunto fictício." actions={<Button variant="outline" onClick={() => setRestoreOpen(true)}><RefreshCcw className="size-4" />Restaurar dados demonstrativos</Button>} />
+    <FeedbackBanner feedback={feedback} onClose={() => setFeedback(null)} />
+    <div className="grid gap-5 xl:grid-cols-2"><SettingsCard icon={Settings2} title="Ambiente"><SettingRow label="Nome" value="Ambiente demonstrativo" /><SettingRow label="Moeda" value="Real brasileiro (BRL)" /><SettingRow label="Fuso horário" value="America/Sao_Paulo" /><SettingRow label="Persistência" value="localStorage deste navegador" /></SettingsCard>
+      <SettingsCard icon={ShieldCheck} title="Políticas financeiras"><SettingRow label="Valores monetários" value="Strings inteiras de centavos" /><SettingRow label="Operações monetárias" value="bigint" /><SettingRow label="Parâmetros de PJR" value="A definir · valor informado" /><SettingRow label="Arredondamento definitivo" value="A definir" /><p className="rounded-xl border border-amber-400/20 bg-amber-400/10 p-4 text-sm text-amber-300">Nenhuma fórmula financeira definitiva está implementada.</p></SettingsCard>
+      <SettingsCard icon={Palette} title="Preferências visuais"><label className="block space-y-2"><span className="text-sm font-medium">Tema padrão</span><Select defaultValue="dark"><option value="dark">Escuro</option><option value="light">Claro</option></Select></label><SettingRow label="Cor estrutural" value="Azul-marinho" /><SettingRow label="Destaque positivo" value="Verde" /><SettingRow label="Formato de datas" value="dd/mm/aaaa" /></SettingsCard>
+      <SettingsCard icon={Database} title="Fontes e privacidade"><SettingRow label="Dados deste protótipo" value="Somente mocks fictícios" /><SettingRow label="Armazenamento do domínio" value="Versão demonstrativa v4" /><SettingRow label="Receita" value="Projeção das entradas existentes" /><SettingRow label="Supabase" value="Sem gravações" /><SettingRow label="Excel" value="Não acessado" /><SettingRow label="Backend" value="Preservado" /><div className="flex flex-wrap gap-2"><Badge variant="neutral">Sem dados reais</Badge><Badge variant="neutral">Sem migration</Badge><Badge variant="neutral">Sem autenticação</Badge></div></SettingsCard></div>
+    <ConfirmDialog open={restoreOpen} title="Restaurar dados demonstrativos?" description="Todos os cadastros e alterações feitos neste navegador serão substituídos pelo conjunto fictício inicial." confirmLabel="Restaurar dados" danger onCancel={() => setRestoreOpen(false)} onConfirm={() => { fundingRepository.restoreDemoData(); setRestoreOpen(false); setFeedback({ tone: "success", message: "Dados demonstrativos restaurados." }); }} />
   </div>;
 }
 
 function SettingsCard({ icon: Icon, title, children }: { icon: typeof Settings2; title: string; children: ReactNode }) { return <Card className="bg-card/75"><CardHeader><CardTitle className="flex items-center gap-2 text-base"><Icon className="size-5 text-primary" />{title}</CardTitle></CardHeader><CardContent className="space-y-4">{children}</CardContent></Card>; }
-function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="block space-y-2"><span className="text-sm font-medium">{label}</span>{children}</label>; }
 function SettingRow({ label, value }: { label: string; value: string }) { return <div className="flex items-center justify-between gap-4 border-b border-border/60 pb-3 text-sm last:border-0"><span className="text-muted-foreground">{label}</span><span className="text-right font-medium">{value}</span></div>; }
