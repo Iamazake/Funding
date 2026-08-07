@@ -14,7 +14,7 @@ export function useAsyncData<T>(loader: () => Promise<T>) {
     setState({ status: "loading", data: null, error: null });
     loader()
       .then((data) => { if (active) setState({ status: "success", data, error: null }); })
-      .catch(() => { if (active) setState({ status: "error", data: null, error: "Não foi possível carregar os dados demonstrativos." }); });
+      .catch((error: unknown) => { if (active) setState({ status: "error", data: null, error: error instanceof Error ? error.message : "Não foi possível carregar os dados." }); });
     return () => { active = false; };
   }, [loader, reloadToken]);
 

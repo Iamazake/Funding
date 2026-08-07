@@ -112,11 +112,74 @@ A política definitiva de remuneração, PJR e rateio ainda depende de validaç�
 backend. O capital próprio REMO é uma fonte própria, nunca um investidor
 fictício.
 
+## Integração operacional
+
+A Fase 1B adicionou o conector local e o espelho bruto no Supabase. Duas cargas
+reais controladas foram concluídas; o batch 1 permanece como evidência do
+primeiro importador e o batch 2 é a referência operacional aprovada. O fluxo
+sempre cria uma cópia binária temporária
+única e abre somente essa cópia, em modo somente leitura. A lista positiva é
+restrita a `BCLI_CADASTRO`, `DFEN_CONTRATO`, `ECON_EMPRESTIMOS` e
+`ECON_AMORTIZACOES`; abas sensíveis e qualquer outra aba são bloqueadas.
+
+O comando preparado, compatível com o Prompt de Comando do Windows, é:
+
+```cmd
+backend\.venv\Scripts\python.exe -m app.cli sync-operational-excel
+```
+
+O mesmo hash não é reprocessado por padrão. O uso de `--force` exige uma ação
+explícita. Nenhuma nova sincronização está autorizada.
+
+### Regras preparadas após a reconciliação do batch 1
+
+- `BAIXA _TOTAL` é um marcador ligado a pagamento parcial, não dinheiro:
+  **Pagamento parcial previsto para etapa futura.**
+- valores monetários usam `Decimal` e arredondamento `ROUND_HALF_UP` para
+  centavos, preservando a precisão original em `raw_data`;
+- CPF e datas secundárias inválidas geram `WARNING`;
+- órfãos geram `DIVERGENT`;
+- múltiplos movimentos da mesma parcela são preservados como informação;
+- `INVALID` fica reservado a identificadores ou valores essenciais inutilizáveis;
+- duração usa relógio monotônico e timestamps futuros são enviados em UTC.
+
+Essas regras valem para sincronizações futuras. O batch 1 não foi reprocessado
+nem reclassificado. Consulte `FASE_1B1_RECONCILIACAO_MAPEAMENTO.md`.
+
+### Camada operacional normalizada proposta
+
+A Fase 1C prepara snapshots normalizados de clientes, contratos, empréstimos e
+parcelas, com rastreabilidade até o espelho e sem deduplicação agressiva. O
+comando exige batch explícito:
+
+```cmd
+backend\.venv\Scripts\python.exe -m app.cli promote-operational-batch 2
+```
+
+Esse comando ainda **não foi executado**. A migration `f1c000000001` também não
+foi aplicada e ambos aguardam autorização expressa. Consulte
+`FASE_1C_MODELO_OPERACIONAL_NORMALIZADO.md`.
+
+### API operacional e telas reais
+
+A promoção 1 do batch 2 alimenta endpoints paginados de leitura:
+
+```text
+GET /api/operational/sales
+GET /api/operational/sales/{id}
+GET /api/operational/revenue
+GET /api/operational/revenue/{id}
+```
+
+Vendas e Receita consomem exclusivamente esses DTOs no modo normal. Não existe
+fallback silencioso para mocks. CPF, `raw_data`, hashes e modelos SQLAlchemy não
+são expostos. Funding, investidores, capital REMO e validação bancária aparecem
+como não informados enquanto não houver dados reais desses domínios.
+
 ## Limites preservados
 
-- nenhum Excel ou Cadastro de Clientes é lido;
-- nenhuma conexão com SharePoint, Supabase ou banco é realizada;
-- nenhuma migration ou entidade de backend foi criada;
+- nenhuma nova sincronização está autorizada depois do batch 2;
+- a migration da Fase 1C está somente preparada, sem aplicação ou promoção;
 - não há autenticação nem integração bancária automática;
 - dados, documentos, contas e contratos são fictícios;
 - páginas consomem somente o serviço/repositório do domínio, sem acessar
@@ -137,5 +200,5 @@ backend\.venv\Scripts\python.exe -m ruff check backend
 backend\.venv\Scripts\python.exe -m pytest backend
 ```
 
-O backend existente foi preservado. Qualquer integração com Excel, banco real
-ou Supabase exige uma aprovação futura e explícita.
+O frontend continua mockado. Nova sincronização, aplicação da migration 1C e
+promoção do batch 2 exigem aprovações futuras e explícitas.

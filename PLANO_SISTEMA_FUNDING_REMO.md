@@ -279,9 +279,12 @@ funding; `Funding Remo.xlsm` continua somente como referência legada.
 
 ### Fase 1B — Conector Excel + espelho
 
-- Fase adiada. Não iniciar durante o protótipo visual.
-- Quando retomada, exigir nova autorização expressa além da aprovação do
-  diagnóstico da Fase 1A.
+- Implementação preparatória e migration estrutural concluídas em 07/08/2026,
+  após nova autorização expressa.
+- A primeira sincronização real foi executada uma única vez como teste de
+  ingestão. A reconciliação 1B.1 foi concluída e as regras 1B.2 foram preparadas
+  sem reclassificar o batch 1.
+- Qualquer nova sincronização permanece bloqueada até autorização específica.
 - Implementar `FileSource` e `LocalFileSource` lendo uma cópia do arquivo
   indicado por `OPERATIONAL_EXCEL_PATH`.
 - Ler somente as abas operacionais comprovadas no novo diagnóstico.
@@ -289,6 +292,22 @@ funding; `Funding Remo.xlsm` continua somente como referência legada.
   fila de inconsistências.
 - Sincronizar manualmente e registrar em `sync_log`.
 - Nunca ler, importar ou sincronizar `Funding Remo.xlsm`.
+
+### Fase 1C — camada operacional normalizada
+
+- Materializar snapshots normalizados a partir de um batch sucedido e
+  explicitamente informado.
+- Preservar os espelhos `excel_*` e todos os snapshots anteriores.
+- Manter DFEN_CONTRATO como fonte primária do contrato e ECON_EMPRESTIMOS como
+  entidade complementar rastreável, inclusive para órfãos.
+- Preservar cada linha de amortização sem impor unicidade de contrato + parcela.
+- Preparar parcela 1:N movimentos sem inventar regra de pagamento parcial.
+- Referenciar inconsistências existentes em vez de duplicá-las.
+- Manter o frontend mockado até a fase de API autorizada.
+
+**Status:** migration aplicada e batch 2 promovido como promoção 1. A API real
+expõe Vendas e Receita com paginação, filtros, contadores e DTOs seguros. As
+telas principais consomem esses endpoints sem fallback para dados fictícios.
 
 ### Fase 2 — API + primeiras telas
 

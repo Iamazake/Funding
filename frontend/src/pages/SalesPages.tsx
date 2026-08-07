@@ -1,114 +1,81 @@
-import { AlertTriangle, ArrowLeft, Banknote, CheckCircle2, Landmark, Layers3, Search, ShieldCheck, WalletCards } from "lucide-react";
-import { useMemo, useState } from "react";
+import { AlertTriangle, ArrowLeft, Banknote, Landmark, Search, WalletCards } from "lucide-react";
+import { useCallback, useState } from "react";
 
 import { AppLink } from "@/components/app/AppLink";
-import { EmptyState } from "@/components/common/DataStates";
+import { EmptyState, ErrorState, LoadingState } from "@/components/common/DataStates";
 import { FormField } from "@/components/common/FormField";
 import { KpiCard } from "@/components/common/KpiCard";
 import { PageHeader } from "@/components/common/PageHeader";
 import { StatusBadge } from "@/components/common/StatusBadge";
-import { Tabs } from "@/components/common/Tabs";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { formatCentsAmount, formatDate, formatDateTime } from "@/lib/formatters";
-import { cents, sumCents } from "@/repositories/fundingRepository";
-import { useFundingState } from "@/services/fundingService";
-import type { FundingContract } from "@/types/funding";
+import { useAsyncData } from "@/hooks/useAsyncData";
+import { formatDate } from "@/lib/formatters";
+import { formatOperationalMoney, formatRate } from "@/lib/operationalFormat";
+import { collectionView, getSale, getSales } from "@/services/operationalApi";
+import type { QualityMessage, SaleItem, SalesFilters } from "@/types/operational";
 
-type State = ReturnType<typeof useFundingState>;
+const PAGE_SIZE = 25;
 
-function allocationsFor(state: State, contractId: string) {
-  return state.contractFundingAllocations.filter((item) => item.fundingContractId === contractId && !item.supersededAt);
-}
-
-function releaseFor(state: State, contractId: string) {
-  return state.treasuryEntries.find((item) => item.fundingContractId === contractId && item.type === "LOAN_RELEASE" && item.status !== "ESTORNADO");
-}
-
-function validationFor(state: State, contract: FundingContract) {
-  const release = releaseFor(state, contract.id);
-  return contract.releaseValidationStatus ?? (release?.status === "CONFIRMADO" ? "VALID" : contract.fundingValidationStatus);
-}
-
-function referenceFor(state: State, contract: FundingContract) {
-  return contract.releaseReference ?? releaseFor(state, contract.id)?.reference ?? "Não informada";
-}
-
-function accountFor(state: State, contract: FundingContract) {
-  return contract.releaseBankAccount ?? releaseFor(state, contract.id)?.cashAccount ?? "Não informada";
-}
-
-function FundingParts({ state, contract }: { state: State; contract: FundingContract }) {
-  const allocations = allocationsFor(state, contract.id);
-  return <details className="min-w-52"><summary className="cursor-pointer font-medium">{allocations.length} {allocations.length === 1 ? "parte" : "partes"}</summary><div className="mt-2 space-y-2 rounded-lg border bg-popover p-3 text-xs shadow-xl">{allocations.map((allocation) => { const source = state.fundingSources.find((item) => item.id === allocation.fundingSourceId); const investor = state.investors.find((item) => item.id === allocation.investorId); return <div key={allocation.id}><strong>{source?.name ?? allocation.fundingSourceType}</strong><p className="text-muted-foreground">{investor?.name ?? (allocation.fundingSourceType === "REMO_OWN_CAPITAL" ? "Capital próprio REMO" : "Sem investidor")} · {formatCentsAmount(allocation.amount)}</p></div>; })}</div></details>;
+function QualityIndicator({ row }: { row: SaleItem }) {
+  if (row.divergence_count > 0) return <span className="font-medium text-rose-400">{row.divergence_count} divergência(s)</span>;
+  if (row.warning_count > 0) return <span className="text-amber-400">{row.warning_count} aviso(s)</span>;
+  return <span className="text-muted-foreground">Sem avisos</span>;
 }
 
 export function SalesPage({ navigate }: { navigate: (path: string) => void }) {
-  const state = useFundingState();
-  const [search, setSearch] = useState(""); const [from, setFrom] = useState(""); const [to, setTo] = useState("");
-  const [status, setStatus] = useState(""); const [validation, setValidation] = useState(""); const [bank, setBank] = useState("");
-  const rows = useMemo(() => state.fundingContracts.filter((contract) => {
-    const text = `${contract.contractCode} ${contract.maskedClientName} ${referenceFor(state, contract)}`.toLowerCase();
-    return (!search || text.includes(search.toLowerCase())) && (!from || contract.releaseDate >= from) && (!to || contract.releaseDate <= to)
-      && (!status || contract.status === status) && (!validation || validationFor(state, contract) === validation)
-      && (!bank || accountFor(state, contract) === bank);
-  }), [bank, from, search, state, status, to, validation]);
-  const released = sumCents(rows.map((item) => item.releasedAmount));
-  const ownCapital = sumCents(rows.flatMap((contract) => allocationsFor(state, contract.id).filter((item) => item.fundingSourceType === "REMO_OWN_CAPITAL").map((item) => item.amount)));
-  const divergent = rows.filter((item) => state.fundingDivergences.some((divergence) => divergence.fundingContractId === item.id && ["OPEN", "IN_REVIEW"].includes(divergence.status))).length;
-  const accounts = [...new Set(state.fundingContracts.map((item) => accountFor(state, item)))];
+  const [filters, setFilters] = useState<SalesFilters>({ page: 1, page_size: PAGE_SIZE, sort_by: "operation_date", sort_order: "desc" });
+  const loader = useCallback(() => getSales(filters), [filters]);
+  const { state, reload } = useAsyncData(loader);
+  const hasFilters = Boolean(filters.search || filters.contract || filters.client || filters.status || filters.period_from || filters.period_to || filters.quality);
+  const view = collectionView(state.status, state.status === "success" ? state.data.pagination.total : 0, hasFilters);
+  const update = (values: Partial<SalesFilters>) => setFilters((current) => ({ ...current, ...values, page: values.page ?? 1 }));
+
   return <div className="space-y-6">
-    <PageHeader eyebrow="Vendas · saídas" title="Operações de liberação" description="Saídas de dinheiro ligadas à liberação e ao funding dos contratos demonstrativos." actions={<Button variant="outline" onClick={() => navigate("/vendas/validacao-bancaria")}><ShieldCheck className="size-4" />Validação bancária</Button>} />
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><KpiCard compact icon={WalletCards} label="Valor liberado" value={formatCentsAmount(released)} /><KpiCard compact icon={Layers3} label="Capital próprio REMO" value={formatCentsAmount(ownCapital)} /><KpiCard compact icon={CheckCircle2} label="Saídas validadas" value={String(rows.filter((item) => validationFor(state, item) === "VALID").length)} /><KpiCard compact icon={AlertTriangle} label="Com divergências" value={String(divergent)} /></div>
-    <Card className="bg-card/75"><CardContent className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-6"><FormField label="Busca"><div className="relative"><Search className="absolute left-3 top-3 size-4 text-muted-foreground" /><Input className="pl-9" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Contrato, cliente ou referência" /></div></FormField><FormField label="Liberação de"><Input type="date" value={from} onChange={(event) => setFrom(event.target.value)} /></FormField><FormField label="Liberação até"><Input type="date" value={to} onChange={(event) => setTo(event.target.value)} /></FormField><FormField label="Status"><Select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">Todos</option><option value="RELEASED">Liberado</option><option value="FUNDING_DIVERGENT">Funding divergente</option><option value="PENDING_FUNDING">Funding pendente</option><option value="CANCELLED">Cancelado</option></Select></FormField><FormField label="Validação da saída"><Select value={validation} onChange={(event) => setValidation(event.target.value)}><option value="">Todas</option><option value="VALID">Válida</option><option value="PENDING">Pendente</option><option value="DIVERGENT">Divergente</option><option value="CORRECTION_REQUIRED">Correção necessária</option></Select></FormField><FormField label="Banco/conta"><Select value={bank} onChange={(event) => setBank(event.target.value)}><option value="">Todos</option>{accounts.map((item) => <option key={item}>{item}</option>)}</Select></FormField></CardContent></Card>
-    <Card className="overflow-hidden bg-card/75"><Table className="min-w-[1900px]"><TableHeader><TableRow><TableHead>Contrato / cliente</TableHead><TableHead>Venda / liberação</TableHead><TableHead>PMT</TableHead><TableHead>Taxa</TableHead><TableHead>Principal</TableHead><TableHead>Valor liberado</TableHead><TableHead>Valor financiado</TableHead><TableHead>Valor projetado</TableHead><TableHead>Referência</TableHead><TableHead>Operador de caixa</TableHead><TableHead>Banco/conta de saída</TableHead><TableHead>Partes / investidores</TableHead><TableHead>Capital REMO</TableHead><TableHead>Validação</TableHead><TableHead>Data validação</TableHead><TableHead>Status</TableHead><TableHead>Divergências</TableHead></TableRow></TableHeader><TableBody>{rows.map((contract) => { const own = sumCents(allocationsFor(state, contract.id).filter((item) => item.fundingSourceType === "REMO_OWN_CAPITAL").map((item) => item.amount)); const divergences = state.fundingDivergences.filter((item) => item.fundingContractId === contract.id && ["OPEN", "IN_REVIEW"].includes(item.status)); return <TableRow key={contract.id} className="cursor-pointer" onClick={() => navigate(`/vendas/${contract.id}`)}><TableCell><AppLink to={`/vendas/${contract.id}`} onNavigate={navigate} className="font-semibold hover:text-primary">{contract.contractCode}</AppLink><p className="text-xs text-muted-foreground">{contract.maskedClientName}</p></TableCell><TableCell>{formatDate(contract.releaseDate)}</TableCell><TableCell>{formatCentsAmount(contract.installmentAmount)}</TableCell><TableCell>{contract.interestRateBps} bps</TableCell><TableCell>{formatCentsAmount(contract.principalAmount)}</TableCell><TableCell>{formatCentsAmount(contract.releasedAmount)}</TableCell><TableCell>{formatCentsAmount(contract.financedAmount)}</TableCell><TableCell>{formatCentsAmount(contract.projectedAmount ?? contract.financedAmount)}</TableCell><TableCell>{referenceFor(state, contract)}</TableCell><TableCell>{contract.cashOperator ?? releaseFor(state, contract.id)?.owner ?? contract.responsibleUser}</TableCell><TableCell>{accountFor(state, contract)}</TableCell><TableCell onClick={(event) => event.stopPropagation()}><FundingParts state={state} contract={contract} /></TableCell><TableCell>{formatCentsAmount(own)}</TableCell><TableCell><StatusBadge status={validationFor(state, contract)} /></TableCell><TableCell>{formatDate(contract.releaseValidationDate)}</TableCell><TableCell><StatusBadge status={contract.status} /></TableCell><TableCell>{divergences.length ? <BadgeCount count={divergences.length} /> : "Nenhuma"}</TableCell></TableRow>; })}</TableBody></Table></Card>
+    <PageHeader eyebrow="Vendas · dados operacionais" title="Operações de crédito" description="Contratos reais provenientes de DFEN_CONTRATO e complementados por ECON_EMPRESTIMOS." actions={<Button variant="outline" onClick={() => navigate("/vendas/validacao-bancaria")}>Validação bancária</Button>} />
+    {state.status === "success" && <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><KpiCard compact icon={WalletCards} label="Contratos e órfãos" value={String(state.data.summary.total_contracts)} /><KpiCard compact icon={Landmark} label="Principal" value={formatOperationalMoney(state.data.summary.principal)} /><KpiCard compact icon={Banknote} label="Valor liberado" value={formatOperationalMoney(state.data.summary.released_amount)} /><KpiCard compact icon={AlertTriangle} label="Com divergência" value={String(state.data.summary.divergent_contracts)} /></div>}
+    <Card className="bg-card/75"><CardContent className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-7"><FormField label="Busca"><div className="relative"><Search className="absolute left-3 top-3 size-4 text-muted-foreground" /><Input className="pl-9" value={filters.search ?? ""} onChange={(event) => update({ search: event.target.value })} placeholder="Contrato ou cliente" /></div></FormField><FormField label="Contrato"><Input value={filters.contract ?? ""} onChange={(event) => update({ contract: event.target.value })} /></FormField><FormField label="Cliente"><Input value={filters.client ?? ""} onChange={(event) => update({ client: event.target.value })} /></FormField><FormField label="Operação de"><Input type="date" value={filters.period_from ?? ""} onChange={(event) => update({ period_from: event.target.value })} /></FormField><FormField label="Operação até"><Input type="date" value={filters.period_to ?? ""} onChange={(event) => update({ period_to: event.target.value })} /></FormField><FormField label="Status"><Input value={filters.status ?? ""} onChange={(event) => update({ status: event.target.value })} placeholder="Status ECON" /></FormField><FormField label="Qualidade"><Select value={filters.quality ?? ""} onChange={(event) => update({ quality: event.target.value as SalesFilters["quality"] })}><option value="">Todas</option><option value="VALID">Válida</option><option value="WARNING">Com aviso</option><option value="DIVERGENT">Divergente</option><option value="INVALID">Inválida</option></Select></FormField></CardContent></Card>
+    {view === "loading" && <LoadingState label="Carregando contratos operacionais…" />}
+    {view === "error" && <ErrorState message={state.status === "error" ? state.error : undefined} onRetry={reload} />}
+    {view === "empty" && <EmptyState title="Nenhuma venda operacional disponível" description="A promoção atual não contém contratos acessíveis." />}
+    {view === "filtered-empty" && <EmptyState title="Nenhum resultado para os filtros" description="Ajuste os filtros para consultar outros contratos." />}
+    {view === "success" && state.status === "success" && <>
+      <Card className="overflow-hidden bg-card/75"><Table className="min-w-[1400px]"><TableHeader><TableRow><TableHead>Contrato / cliente</TableHead><TableHead>Operação</TableHead><TableHead>Liberação</TableHead><TableHead>Prazo</TableHead><TableHead>Principal</TableHead><TableHead>IOF</TableHead><TableHead>Financiado</TableHead><TableHead>PMT</TableHead><TableHead>Liberado</TableHead><TableHead>Taxa</TableHead><TableHead>Status</TableHead><TableHead>Qualidade</TableHead><TableHead>Funding</TableHead></TableRow></TableHeader><TableBody>{state.data.items.map((row) => <TableRow key={row.id} className="cursor-pointer" onClick={() => navigate(`/vendas/${row.id}`)}><TableCell><AppLink to={`/vendas/${row.id}`} onNavigate={navigate} className="font-semibold text-primary">{row.contract_code ?? "Contrato não informado"}</AppLink><p className="text-xs text-muted-foreground">{row.client_name ?? `Cliente não resolvido · ${row.source_client_code ?? "sem código"}`}</p></TableCell><TableCell>{formatDate(row.operation_date)}</TableCell><TableCell>{formatDate(row.release_date)}</TableCell><TableCell>{row.term ?? "—"}</TableCell><TableCell>{formatOperationalMoney(row.principal)}</TableCell><TableCell>{formatOperationalMoney(row.iof)}</TableCell><TableCell>{formatOperationalMoney(row.financed_amount)}</TableCell><TableCell>{formatOperationalMoney(row.installment_amount)}</TableCell><TableCell>{formatOperationalMoney(row.released_amount)}</TableCell><TableCell>{formatRate(row.interest_rate)}</TableCell><TableCell><StatusBadge status={row.status ?? "NÃO INFORMADO"} /></TableCell><TableCell><QualityIndicator row={row} /></TableCell><TableCell>Não informado</TableCell></TableRow>)}</TableBody></Table></Card>
+      <Pagination page={state.data.pagination.page} pages={state.data.pagination.pages} total={state.data.pagination.total} onPage={(page) => update({ page })} />
+    </>}
   </div>;
 }
 
-const salesTabs = [
-  { value: "summary", label: "Resumo" }, { value: "funding", label: "Composição do funding" },
-  { value: "bank", label: "Validação bancária" }, { value: "movements", label: "Movimentos relacionados" },
-  { value: "divergences", label: "Divergências" }, { value: "history", label: "Histórico" },
-];
-
 export function SalesDetailPage({ id, navigate }: { id: string; navigate: (path: string) => void }) {
-  const state = useFundingState(); const contract = state.fundingContracts.find((item) => item.id === id); const [tab, setTab] = useState("summary");
-  if (!contract) return <EmptyState title="Venda não encontrada" />;
-  const allocations = allocationsFor(state, id); const movements = state.treasuryEntries.filter((item) => item.fundingContractId === id);
-  const divergences = state.fundingDivergences.filter((item) => item.fundingContractId === id); const related = new Set([id, ...divergences.map((item) => item.id)]);
-  const history = state.auditEvents.filter((item) => related.has(item.entityId)); const totalFunding = sumCents(allocations.map((item) => item.amount));
-  const ownCapital = sumCents(allocations.filter((item) => item.fundingSourceType === "REMO_OWN_CAPITAL").map((item) => item.amount));
-  return <div className="space-y-6">
-    <AppLink to="/vendas" onNavigate={navigate} className="inline-flex items-center gap-2 text-sm text-muted-foreground"><ArrowLeft className="size-4" />Voltar para Vendas</AppLink>
-    <PageHeader eyebrow="Vendas · saída" title={`${contract.contractCode} · ${contract.maskedClientName}`} description="Liberação do contrato e composição demonstrativa do funding, sem limite fixo de partes." actions={<StatusBadge status={contract.status} />} />
-    <Tabs items={salesTabs} value={tab} onChange={setTab} />
-    {tab === "summary" && <><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><KpiCard compact icon={Banknote} label="Valor liberado" value={formatCentsAmount(contract.releasedAmount)} /><KpiCard compact icon={Landmark} label="Principal" value={formatCentsAmount(contract.principalAmount)} /><KpiCard compact icon={Layers3} label="Funding informado" value={formatCentsAmount(totalFunding)} /><KpiCard compact icon={WalletCards} label="Capital REMO" value={formatCentsAmount(ownCapital)} /></div><InfoGrid rows={[["Data da venda/liberação", formatDate(contract.releaseDate)], ["Valor da parcela", formatCentsAmount(contract.installmentAmount)], ["Taxa de juros", `${contract.interestRateBps} bps`], ["Valor financiado", formatCentsAmount(contract.financedAmount)], ["Valor projetado", formatCentsAmount(contract.projectedAmount ?? contract.financedAmount)], ["Referência", referenceFor(state, contract)], ["Operador de caixa", contract.cashOperator ?? contract.responsibleUser], ["Banco/conta de saída", accountFor(state, contract)], ["Validação da saída", validationFor(state, contract)], ["Data da validação", formatDate(contract.releaseValidationDate)], ["Observação", contract.notes]]} /></>}
-    {tab === "funding" && <SimpleTable headers={["Parte", "Fonte", "Investidor", "Aporte", "Valor do funding", "Saldo histórico", "Validação"]}>{allocations.map((item, index) => { const source = state.fundingSources.find((value) => value.id === item.fundingSourceId); const investor = state.investors.find((value) => value.id === item.investorId); const contribution = state.contributions.find((value) => value.id === item.contributionId); return <TableRow key={item.id}><TableCell>{index + 1}</TableCell><TableCell>{source?.name ?? item.fundingSourceType}</TableCell><TableCell>{investor?.name ?? (item.fundingSourceType === "REMO_OWN_CAPITAL" ? "Capital próprio REMO" : "—")}</TableCell><TableCell>{contribution?.code ?? "—"}</TableCell><TableCell>{formatCentsAmount(item.amount)}</TableCell><TableCell>{formatCentsAmount(item.historicalAvailableBalance)}</TableCell><TableCell><StatusBadge status={item.validationStatus} /></TableCell></TableRow>; })}</SimpleTable>}
-    {tab === "bank" && <><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><KpiCard compact icon={Banknote} label="Saída esperada" value={formatCentsAmount(contract.releasedAmount)} /><KpiCard compact icon={CheckCircle2} label="Saída registrada" value={formatCentsAmount(releaseFor(state, id)?.amount ?? "0")} /><KpiCard compact icon={AlertTriangle} label="Diferença" value={formatCentsAmount((cents(contract.releasedAmount) - cents(releaseFor(state, id)?.amount ?? "0")).toString())} /><KpiCard compact icon={ShieldCheck} label="Validação" value={validationFor(state, contract)} /></div><InfoGrid rows={[["Banco/conta", accountFor(state, contract)], ["Referência bancária", referenceFor(state, contract)], ["Operador de caixa", contract.cashOperator ?? contract.responsibleUser], ["Data da validação", formatDate(contract.releaseValidationDate)]]} /></>}
-    {tab === "movements" && <SimpleTable headers={["Data", "Tipo", "Natureza", "Valor", "Conta", "Referência", "Responsável", "Status"]}>{movements.map((item) => <TableRow key={item.id}><TableCell>{formatDate(item.date)}</TableCell><TableCell>{item.type.replaceAll("_", " ")}</TableCell><TableCell><StatusBadge status={item.direction} /></TableCell><TableCell>{formatCentsAmount(item.amount)}</TableCell><TableCell>{item.cashAccount}</TableCell><TableCell>{item.reference}</TableCell><TableCell>{item.owner}</TableCell><TableCell><StatusBadge status={item.status} /></TableCell></TableRow>)}</SimpleTable>}
-    {tab === "divergences" && <FundingDivergenceTable state={state} rows={divergences} navigate={navigate} />}
-    {tab === "history" && <Card className="bg-card/75"><CardContent className="space-y-4 p-6">{history.map((item) => <div key={item.id}><p className="text-sm">{item.description}</p><p className="text-xs text-muted-foreground">{formatDateTime(item.date)} · {item.demoUser}</p></div>)}</CardContent></Card>}
-  </div>;
+  const loader = useCallback(() => getSale(id), [id]);
+  const { state, reload } = useAsyncData(loader);
+  if (state.status === "loading") return <LoadingState label="Carregando venda operacional…" />;
+  if (state.status === "error") return <ErrorState message={state.error} onRetry={reload} />;
+  const row = state.data;
+  return <div className="space-y-6"><AppLink to="/vendas" onNavigate={navigate} className="inline-flex items-center gap-2 text-sm text-muted-foreground"><ArrowLeft className="size-4" />Voltar para Vendas</AppLink><PageHeader eyebrow="Venda operacional" title={row.contract_code ?? "Contrato não informado"} description={row.client_name ?? "Cliente não resolvido na promoção atual."} actions={<StatusBadge status={row.data_quality_status} />} /><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><KpiCard compact icon={Landmark} label="Principal" value={formatOperationalMoney(row.principal)} /><KpiCard compact icon={Banknote} label="Valor liberado" value={formatOperationalMoney(row.released_amount)} /><KpiCard compact icon={WalletCards} label="PMT" value={formatOperationalMoney(row.installment_amount)} /><KpiCard compact icon={AlertTriangle} label="Avisos / divergências" value={`${row.warning_count} / ${row.divergence_count}`} /></div><InfoGrid rows={[["Código do cliente", row.source_client_code ?? "Não informado"], ["Data da operação", formatDate(row.operation_date)], ["Data de liberação", formatDate(row.release_date)], ["Primeiro vencimento", formatDate(row.first_due_date)], ["Prazo", row.term ? `${row.term} meses` : "Não informado"], ["IOF", formatOperationalMoney(row.iof)], ["Valor financiado", formatOperationalMoney(row.financed_amount)], ["Taxa de juros", formatRate(row.interest_rate)], ["TIR", formatRate(row.irr_rate)], ["CET mensal", formatRate(row.cet_monthly_rate)], ["Status", row.status ?? "Não informado"], ["Validação bancária", "Pendente / não registrada"], ["Composição do funding", "Não informada"], ["Investidores", "Não informados"], ["Capital REMO", "Não informado"]]} /><QualityPanel warnings={row.warnings} divergences={row.divergences} /></div>;
 }
 
 export function SalesDivergencesPage({ navigate }: { navigate: (path: string) => void }) {
-  const state = useFundingState();
-  return <div className="space-y-6"><PageHeader eyebrow="Vendas · saídas" title="Divergências" description="Diferenças de funding e liberação que exigem revisão operacional." /><FundingDivergenceTable state={state} rows={state.fundingDivergences} navigate={navigate} /></div>;
+  const loader = useCallback(() => getSales({ page: 1, page_size: 100, quality: "DIVERGENT" }), []);
+  const { state, reload } = useAsyncData(loader);
+  return <div className="space-y-6"><PageHeader eyebrow="Vendas" title="Divergências operacionais" description="Empréstimos sem contrato e outras divergências reais da promoção atual." />{state.status === "loading" ? <LoadingState /> : state.status === "error" ? <ErrorState message={state.error} onRetry={reload} /> : state.data.items.length === 0 ? <EmptyState /> : <Card className="overflow-hidden bg-card/75"><Table><TableHeader><TableRow><TableHead>Contrato</TableHead><TableHead>Cliente</TableHead><TableHead>Status</TableHead><TableHead>Motivos</TableHead></TableRow></TableHeader><TableBody>{state.data.items.map((row) => <TableRow key={row.id} className="cursor-pointer" onClick={() => navigate(`/vendas/${row.id}`)}><TableCell>{row.contract_code ?? "Não informado"}</TableCell><TableCell>{row.client_name ?? "Não resolvido"}</TableCell><TableCell><StatusBadge status={row.data_quality_status} /></TableCell><TableCell>{row.divergence_count} divergência(s)</TableCell></TableRow>)}</TableBody></Table></Card>}</div>;
 }
 
 export function SalesBankValidationPage({ navigate }: { navigate: (path: string) => void }) {
-  const state = useFundingState(); const [status, setStatus] = useState("");
-  const rows = state.fundingContracts.filter((item) => !status || validationFor(state, item) === status);
-  return <div className="space-y-6"><PageHeader eyebrow="Vendas · saídas" title="Validação bancária" description="Conferência demonstrativa das saídas de caixa referentes às liberações." /><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><KpiCard compact icon={Banknote} label="Saídas para conferir" value={String(rows.length)} /><KpiCard compact icon={CheckCircle2} label="Validadas" value={String(rows.filter((item) => validationFor(state, item) === "VALID").length)} /><KpiCard compact icon={AlertTriangle} label="Divergentes" value={String(rows.filter((item) => validationFor(state, item) === "DIVERGENT").length)} /><KpiCard compact icon={WalletCards} label="Total liberado" value={formatCentsAmount(sumCents(rows.map((item) => item.releasedAmount)))} /></div><Card className="bg-card/75"><CardContent className="max-w-sm p-4"><FormField label="Status da validação"><Select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">Todos</option><option value="VALID">Válida</option><option value="PENDING">Pendente</option><option value="DIVERGENT">Divergente</option><option value="CORRECTION_REQUIRED">Correção necessária</option></Select></FormField></CardContent></Card><SimpleTable headers={["Contrato", "Data da saída", "Valor liberado", "Valor registrado", "Diferença", "Banco/conta", "Referência", "Operador", "Validação", "Data da validação"]}>{rows.map((contract) => { const release = releaseFor(state, contract.id); return <TableRow key={contract.id} className="cursor-pointer" onClick={() => navigate(`/vendas/${contract.id}`)}><TableCell>{contract.contractCode}<p className="text-xs text-muted-foreground">{contract.maskedClientName}</p></TableCell><TableCell>{formatDate(contract.releaseDate)}</TableCell><TableCell>{formatCentsAmount(contract.releasedAmount)}</TableCell><TableCell>{formatCentsAmount(release?.amount ?? "0")}</TableCell><TableCell>{formatCentsAmount((cents(contract.releasedAmount) - cents(release?.amount ?? "0")).toString())}</TableCell><TableCell>{accountFor(state, contract)}</TableCell><TableCell>{referenceFor(state, contract)}</TableCell><TableCell>{contract.cashOperator ?? release?.owner ?? contract.responsibleUser}</TableCell><TableCell><StatusBadge status={validationFor(state, contract)} /></TableCell><TableCell>{formatDate(contract.releaseValidationDate)}</TableCell></TableRow>; })}</SimpleTable></div>;
+  return <div className="space-y-6"><AppLink to="/vendas" onNavigate={navigate} className="inline-flex items-center gap-2 text-sm text-muted-foreground"><ArrowLeft className="size-4" />Voltar para Vendas</AppLink><PageHeader eyebrow="Vendas" title="Validação bancária" description="Nenhuma validação bancária real foi integrada nesta fase." /><EmptyState title="Pendente / não registrada" description="Os contratos reais não foram associados a movimentos bancários ou contas fictícias." /></div>;
 }
 
-function FundingDivergenceTable({ state, rows, navigate }: { state: State; rows: State["fundingDivergences"]; navigate: (path: string) => void }) {
-  return <SimpleTable headers={["Contrato", "Tipo", "Esperado", "Identificado", "Diferença", "Situação", "Histórico"]}>{rows.map((item) => { const contract = state.fundingContracts.find((value) => value.id === item.fundingContractId); return <TableRow key={item.id} className="cursor-pointer" onClick={() => navigate(`/vendas/${item.fundingContractId}`)}><TableCell>{contract?.contractCode ?? item.fundingContractId}<p className="text-xs text-muted-foreground">{contract?.maskedClientName}</p></TableCell><TableCell>{item.type.replaceAll("_", " ")}</TableCell><TableCell>{formatCentsAmount(item.expectedAmount)}</TableCell><TableCell>{formatCentsAmount(item.identifiedAmount)}</TableCell><TableCell>{formatCentsAmount(item.differenceAmount)}</TableCell><TableCell><StatusBadge status={item.status} /></TableCell><TableCell>{item.resolutionNotes ?? item.description}</TableCell></TableRow>; })}</SimpleTable>;
+function QualityPanel({ warnings, divergences }: { warnings: QualityMessage[]; divergences: QualityMessage[] }) {
+  return <div className="grid gap-4 lg:grid-cols-2"><Card className="bg-card/75"><CardContent className="p-6"><h2 className="font-semibold text-amber-400">Avisos ({warnings.length})</h2><div className="mt-3 space-y-2 text-sm">{warnings.length ? warnings.map((item, index) => <p key={`${item.type}-${index}`}>{item.message}</p>) : <p className="text-muted-foreground">Nenhum aviso.</p>}</div></CardContent></Card><Card className="border-rose-400/30 bg-card/75"><CardContent className="p-6"><h2 className="font-semibold text-rose-400">Divergências ({divergences.length})</h2><div className="mt-3 space-y-2 text-sm">{divergences.length ? divergences.map((item, index) => <p key={`${item.type}-${index}`}>{item.message}</p>) : <p className="text-muted-foreground">Nenhuma divergência.</p>}</div></CardContent></Card></div>;
 }
 
-function BadgeCount({ count }: { count: number }) { return <span className="inline-flex rounded-full bg-rose-500/15 px-2 py-1 text-xs font-medium text-rose-400">{count} aberta{count === 1 ? "" : "s"}</span>; }
-function InfoGrid({ rows }: { rows: [string, string][] }) { return <Card className="bg-card/75"><CardContent className="grid gap-4 p-6 sm:grid-cols-2 xl:grid-cols-3">{rows.map(([label, value]) => <div key={label}><p className="text-xs uppercase tracking-wider text-muted-foreground">{label}</p><p className="mt-1 text-sm font-medium">{value}</p></div>)}</CardContent></Card>; }
-function SimpleTable({ headers, children }: { headers: string[]; children: React.ReactNode }) { return <Card className="overflow-hidden bg-card/75"><Table><TableHeader><TableRow>{headers.map((header) => <TableHead key={header}>{header}</TableHead>)}</TableRow></TableHeader><TableBody>{children}</TableBody></Table></Card>; }
+function InfoGrid({ rows }: { rows: [string, string][] }) {
+  return <Card className="bg-card/75"><CardContent className="grid gap-4 p-6 sm:grid-cols-2 xl:grid-cols-3">{rows.map(([label, value]) => <div key={label}><p className="text-xs uppercase tracking-wider text-muted-foreground">{label}</p><p className="mt-1 text-sm font-medium">{value}</p></div>)}</CardContent></Card>;
+}
+
+function Pagination({ page, pages, total, onPage }: { page: number; pages: number; total: number; onPage: (page: number) => void }) {
+  return <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground"><span>{total} registro(s) · página {page} de {Math.max(pages, 1)}</span><div className="flex gap-2"><Button variant="outline" disabled={page <= 1} onClick={() => onPage(page - 1)}>Anterior</Button><Button variant="outline" disabled={page >= pages} onClick={() => onPage(page + 1)}>Próxima</Button></div></div>;
+}

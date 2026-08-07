@@ -37,8 +37,18 @@ Leia `PLANO_SISTEMA_FUNDING_REMO.md` antes de alterar o sistema.
 
 ## Estado atual
 
-A Fase 0 e o diagnóstico técnico da Fase 1A estão concluídos. A Fase 1B foi
-adiada por decisão autorizada. A etapa atual é o protótipo visual funcional do
-funding, usando somente providers mockados e dados fictícios. Não ler Excel,
-criar sincronização, migrations operacionais ou gravações no Supabase. A Fase
-1B só poderá ser retomada mediante nova autorização expressa.
+A Fase 0, o diagnóstico técnico da Fase 1A e a Fase 1B estão concluídos. Duas
+sincronizações reais controladas foram executadas. O batch 1 é evidência
+imutável e o batch 2 é a referência operacional aprovada. O frontend permanece
+integralmente mockado.
+
+Qualquer nova sincronização do arquivo operacional real continua bloqueada até
+autorização expressa específica. Não execute
+`sync-operational-excel` contra o arquivo configurado sem essa autorização.
+
+A migration `f1c000000001` foi aplicada e o batch 2 foi promovido como promoção
+1. Vendas e Receita usam a API operacional real, paginada e sem fallback para
+mocks. Funding, investidores, capital REMO e validação bancária continuam sem
+dados reais e não podem ser associados aos contratos operacionais. Não abra
+novamente o Excel, não use `--force` e não execute outra sincronização ou
+promoção sem nova autorização expressa.
