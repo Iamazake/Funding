@@ -55,7 +55,8 @@ export type RevenueColumnDensity = "COMPACT" | "COMFORTABLE";
 export type RevenueColumnKey =
   | "contract" | "installment" | "dueDate" | "paymentDate" | "expected" | "paid"
   | "status" | "operator" | "principal" | "interest" | "iof" | "loss" | "discount"
-  | "apurated" | "componentDifference" | "paymentReference" | "funding" | "bankValidation" | "revenueStatus";
+  | "apurated" | "componentDifference" | "paymentReference" | "funding" | "bankAccount"
+  | "bankDifference" | "bankValidation" | "revenueStatus";
 
 export type TreasuryEntryType =
   | "INVESTOR_CONTRIBUTION_RECEIVED" | "PMT_RECEIVED" | "PRINCIPAL_RECEIVED" | "INTEREST_RECEIVED"
@@ -111,6 +112,8 @@ export interface FundingLedgerEntry {
 export interface FundingContract {
   id: string; contractCode: string; maskedClientName: string; operationDate: string; releaseDate: string;
   principalAmount: Cents; financedAmount: Cents; releasedAmount: Cents; installmentAmount: Cents;
+  projectedAmount?: Cents; releaseReference?: string; cashOperator?: string; releaseBankAccount?: string;
+  releaseValidationStatus?: FundingValidationStatus; releaseValidationDate?: string;
   termMonths: number; interestRateBps: BasisPoints; status: FundingContractStatus;
   fundingValidationStatus: FundingValidationStatus; responsibleUser: string; notes: string;
   createdAt: string; updatedAt: string;
@@ -180,6 +183,7 @@ export interface RevenueRecordView {
   iofAmount: Cents; penaltyAmount: Cents; discountAmount: Cents; lossAmount: Cents;
   apuratedAmount: Cents; componentDifference: Cents; componentStatus: ReceiptComponentStatus;
   paymentReference: RevenuePaymentReference; mainFundingSourceLabel: string; fundingSourcesCount: number;
+  bankAccountLabel: string; bankDifference: Cents;
   bankValidationStatus: IncomingBankValidationStatus; reconciliationStatus: IncomingReconciliationStatus;
   allocationStatus: RevenueAllocationStatus; revenueStatus: RevenueStatus; createdAt: string; updatedAt: string;
 }

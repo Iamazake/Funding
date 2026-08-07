@@ -29,7 +29,8 @@ export const revenueColumnLabels: Record<RevenueColumnKey, string> = {
   expected: "PMT prevista", paid: "Valor pago", status: "Status operacional", operator: "Operador financeiro",
   principal: "Principal", interest: "Juros", iof: "IOF", loss: "Prejuízo", discount: "Desconto",
   apurated: "Total apurado", componentDifference: "Diferença dos componentes", paymentReference: "Referência do pagamento",
-  funding: "Fontes do funding", bankValidation: "Validação bancária", revenueStatus: "Status da receita",
+  funding: "Fonte/investidor principal", bankAccount: "Banco/conta", bankDifference: "Diferença encontrada",
+  bankValidation: "Validação da entrada", revenueStatus: "Status da receita",
 };
 
 export const requiredRevenueColumns: RevenueColumnKey[] = ["contract", "installment", "paid", "revenueStatus"];

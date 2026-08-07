@@ -74,6 +74,8 @@ export function buildRevenueRecordView(state: FundingState, receipt: TreasuryInc
   });
   const main = allocations[0];
   const mainSource = state.fundingSources.find((item) => item.id === main?.fundingSourceId);
+  const reconciledAmount = links.reduce((total, item) => total + money(item.amount), 0n);
+  const bankAccounts = [...new Set(movements.map((item) => item.bankAccountId))];
   return {
     id: receipt.id,
     operationalReceiptId: receipt.id,
@@ -106,6 +108,8 @@ export function buildRevenueRecordView(state: FundingState, receipt: TreasuryInc
     },
     mainFundingSourceLabel: mainSource?.name ?? (main?.fundingSourceType === "REMO_OWN_CAPITAL" ? "Capital próprio REMO" : "Sem composição histórica"),
     fundingSourcesCount: allocations.length,
+    bankAccountLabel: bankAccounts.join(", ") || "Não informada",
+    bankDifference: (money(receipt.paidAmountFromOperationalSource) - reconciledAmount).toString(),
     bankValidationStatus: receipt.bankValidationStatus,
     reconciliationStatus: receipt.reconciliationStatus,
     allocationStatus: deriveRevenueAllocationStatus(state, receipt),

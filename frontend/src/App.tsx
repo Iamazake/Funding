@@ -8,20 +8,17 @@ import { useRouter } from "@/hooks/useRouter";
 import { CapitalRemunerationsPage } from "@/pages/CapitalRemunerationsPage";
 import { ContributionDetailPage } from "@/pages/ContributionDetailPage";
 import { ContributionsPage } from "@/pages/ContributionsPage";
-import {
-  ContractAllocationsPage, ContractCompositionPage, ContractDetailPage,
-  ContractDivergencesPage, ContractsPage,
-} from "@/pages/ContractsPage";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { InvestorDetailPage } from "@/pages/InvestorDetailPage";
 import { InvestorsPage } from "@/pages/InvestorsPage";
-import { ReportsPage } from "@/pages/ReportsPage";
+import { ReportsPage, type ReportsSection } from "@/pages/ReportsPage";
 import { RevenueDetailPage } from "@/pages/RevenueDetailPage";
 import { RevenuePage } from "@/pages/RevenuePage";
 import { RevenueDivergencesPage, RevenueMonthlySummaryPage, RevenuePendingPage } from "@/pages/RevenueWorkPages";
+import { SalesBankValidationPage, SalesDetailPage, SalesDivergencesPage, SalesPage } from "@/pages/SalesPages";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { SyncPage } from "@/pages/SyncPage";
-import { TreasuryIncomingDetailPage, TreasuryIncomingListPage } from "@/pages/TreasuryIncomingPages";
+import { TreasuryIncomingListPage } from "@/pages/TreasuryIncomingPages";
 import { TreasuryPage, type TreasurySection } from "@/pages/TreasuryPage";
 
 function legacyRedirect(path: string): string | null {
@@ -29,15 +26,20 @@ function legacyRedirect(path: string): string | null {
   if (path === "/cadastro") return "/cadastro/investidores";
   if (path === "/investidores") return "/cadastro/investidores";
   if (path === "/aportes") return "/cadastro/aportes";
-  if (path === "/rateio") return "/contratos/alocacoes";
+  if (path === "/rateio") return "/vendas";
   if (path.startsWith("/cadastro/prospects") || path.startsWith("/prospects")) return "/cadastro/investidores";
   if (path.startsWith("/cadastro/dividendos") || path.startsWith("/dividendos")) return "/cadastro/remuneracoes";
-  if (path === "/vendas" || path === "/vendas/validacao-bancaria") return "/tesouraria/entradas";
-  if (path === "/vendas/divergencias") return "/tesouraria/divergencias";
-  if (path === "/vendas/nova") return "/contratos";
-  const retiredSale = path.match(/^\/vendas\/([^/]+)$/);
-  if (retiredSale) return `/contratos/${retiredSale[1]}`;
-  if (path === "/tesouraria/movimentacoes") return "/tesouraria";
+  if (path === "/vendas/nova") return "/vendas";
+  if (path === "/contratos" || path === "/contratos/composicao" || path === "/contratos/alocacoes") return "/vendas";
+  if (path === "/contratos/divergencias") return "/vendas/divergencias";
+  const retiredContract = path.match(/^\/contratos\/([^/]+)(?:\/funding)?$/);
+  if (retiredContract) return `/vendas/${retiredContract[1]}`;
+  if (path === "/tesouraria/entradas") return "/receita/validacao-bancaria";
+  const retiredIncoming = path.match(/^\/tesouraria\/entradas\/([^/]+)$/);
+  if (retiredIncoming) return `/receita/${retiredIncoming[1]}`;
+  if (path === "/tesouraria/saidas") return "/vendas";
+  if (path === "/tesouraria/movimentacoes") return "/tesouraria/fluxo";
+  if (path === "/relatorios") return "/relatorios/safra";
   const investor = path.match(/^\/investidores\/([^/]+)$/);
   if (investor) return `/cadastro/investidores/${investor[1]}`;
   const contribution = path.match(/^\/aportes\/([^/]+)$/);
@@ -64,32 +66,32 @@ function resolveRoute(path: string, navigate: (path: string) => void) {
   const remuneration = path.match(/^\/cadastro\/remuneracoes\/([^/]+)$/);
   if (remuneration) return <CapitalRemunerationsPage id={remuneration[1]} />;
 
-  if (path === "/contratos") return <ContractsPage navigate={navigate} />;
-  if (path === "/contratos/composicao") return <ContractCompositionPage navigate={navigate} />;
-  if (path === "/contratos/alocacoes") return <ContractAllocationsPage />;
-  if (path === "/contratos/divergencias") return <ContractDivergencesPage />;
-  const contractFunding = path.match(/^\/contratos\/([^/]+)\/funding$/);
-  if (contractFunding) return <ContractDetailPage id={contractFunding[1]} navigate={navigate} fundingOnly />;
-  const contract = path.match(/^\/contratos\/([^/]+)$/);
-  if (contract) return <ContractDetailPage id={contract[1]} navigate={navigate} />;
+  if (path === "/vendas") return <SalesPage navigate={navigate} />;
+  if (path === "/vendas/divergencias") return <SalesDivergencesPage navigate={navigate} />;
+  if (path === "/vendas/validacao-bancaria") return <SalesBankValidationPage navigate={navigate} />;
+  const sale = path.match(/^\/vendas\/([^/]+)$/);
+  if (sale) return <SalesDetailPage id={sale[1]} navigate={navigate} />;
 
   if (path === "/receita") return <RevenuePage navigate={navigate} />;
+  if (path === "/receita/validacao-bancaria") return <TreasuryIncomingListPage navigate={navigate} />;
   if (path === "/receita/pendencias") return <RevenuePendingPage navigate={navigate} />;
   if (path === "/receita/divergencias") return <RevenueDivergencesPage navigate={navigate} />;
   if (path === "/receita/resumo-mensal") return <RevenueMonthlySummaryPage />;
   const revenue = path.match(/^\/receita\/([^/]+)$/);
   if (revenue) return <RevenueDetailPage id={revenue[1]} navigate={navigate} />;
 
-  if (path === "/tesouraria/entradas") return <TreasuryIncomingListPage navigate={navigate} />;
-  const incoming = path.match(/^\/tesouraria\/entradas\/([^/]+)$/);
-  if (incoming) return <TreasuryIncomingDetailPage id={incoming[1]} navigate={navigate} />;
   const treasury: Record<string, TreasurySection> = {
-    "/tesouraria": "summary", "/tesouraria/saidas": "exits",
+    "/tesouraria": "summary", "/tesouraria/fluxo": "flow",
     "/tesouraria/remuneracoes": "remunerations", "/tesouraria/conciliacao": "reconciliation",
     "/tesouraria/divergencias": "divergences",
   };
   if (treasury[path]) return <TreasuryPage section={treasury[path]} navigate={navigate} />;
-  if (path === "/relatorios") return <ReportsPage />;
+  const reports: Record<string, ReportsSection> = {
+    "/relatorios/safra": "harvest", "/relatorios/receita": "revenue",
+    "/relatorios/funding": "funding", "/relatorios/pdd": "pdd",
+    "/relatorios/fluxo-investidor": "investor-flow",
+  };
+  if (reports[path]) return <ReportsPage section={reports[path]} navigate={navigate} />;
   if (path === "/sincronizacao") return <SyncPage />;
   if (path === "/configuracoes") return <SettingsPage />;
   return <EmptyState title="Página não encontrada" action={<Button onClick={() => navigate("/dashboard")}><FileQuestion className="size-4" />Ir para o dashboard</Button>} />;

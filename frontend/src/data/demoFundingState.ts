@@ -91,14 +91,18 @@ export const DEMO_STATE: FundingState = {
     {
       id: "sale-demo-001", contractCode: "CTR-DEMO-1001", maskedClientName: "Cliente A*** Demonstrativo",
       operationDate: "2026-07-04", releaseDate: "2026-07-04", principalAmount: "9000000", financedAmount: "9500000",
-      releasedAmount: "9000000", installmentAmount: "950000", termMonths: 12, interestRateBps: 245,
+      releasedAmount: "9000000", installmentAmount: "950000", projectedAmount: "11400000", releaseReference: "BANK-OUT-DEMO-001",
+      cashOperator: "Conferente Demo", releaseBankAccount: "Conta Caixa Demo 01", releaseValidationStatus: "VALID",
+      releaseValidationDate: "2026-07-05", termMonths: 12, interestRateBps: 245,
       status: "RELEASED", fundingValidationStatus: "VALID",
       responsibleUser: "Operador Demo", notes: "Contrato fictício com funding completo.", createdAt: "2026-07-04T12:00:00.000Z", updatedAt: "2026-07-05T12:00:00.000Z",
     },
     {
       id: "sale-demo-002", contractCode: "CTR-DEMO-1002", maskedClientName: "Cliente B*** Demonstrativo",
       operationDate: "2026-07-12", releaseDate: "2026-07-12", principalAmount: "8000000", financedAmount: "8400000",
-      releasedAmount: "8000000", installmentAmount: "700000", termMonths: 14, interestRateBps: 265,
+      releasedAmount: "8000000", installmentAmount: "700000", projectedAmount: "9800000", releaseReference: "BANK-OUT-DEMO-002",
+      cashOperator: "Operador Demo", releaseBankAccount: "Conta Caixa Demo 02", releaseValidationStatus: "DIVERGENT",
+      releaseValidationDate: "2026-07-13", termMonths: 14, interestRateBps: 265,
       status: "FUNDING_DIVERGENT", fundingValidationStatus: "DIVERGENT",
       responsibleUser: "Operador Demo", notes: "Contrato preservado com diferença de funding para correção posterior.", createdAt: "2026-07-12T12:00:00.000Z", updatedAt: "2026-07-12T12:00:00.000Z",
     },
@@ -140,7 +144,7 @@ export const DEMO_STATE: FundingState = {
     { id: "revdiv-004", incomingReceiptId: "receipt-004", type: "BANK_MOVEMENT_NOT_FOUND", expectedAmount: "950000", actualAmount: "0", differenceAmount: "950000", description: "Movimento bancário não localizado.", status: "OPEN", sourceTreasuryDivergenceId: "tdiv-002", createdAt: "2026-08-03T13:00:00.000Z", updatedAt: "2026-08-03T13:00:00.000Z" },
   ],
   revenueColumnPreferences: {
-    visibleColumns: ["contract", "installment", "dueDate", "paymentDate", "expected", "paid", "status", "operator", "principal", "interest", "iof", "loss", "discount", "apurated", "componentDifference", "paymentReference", "funding", "bankValidation", "revenueStatus"],
+    visibleColumns: ["contract", "installment", "dueDate", "paymentDate", "expected", "paid", "status", "operator", "principal", "interest", "iof", "loss", "discount", "apurated", "componentDifference", "paymentReference", "funding", "bankAccount", "bankDifference", "bankValidation", "revenueStatus"],
     density: "COMFORTABLE",
   },
   allocationReceiptShares: [
