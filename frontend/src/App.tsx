@@ -2,9 +2,11 @@ import { FileQuestion } from "lucide-react";
 import { useEffect } from "react";
 
 import { AdminShell } from "@/components/app/AdminShell";
-import { EmptyState } from "@/components/common/DataStates";
+import { EmptyState, LoadingState } from "@/components/common/DataStates";
 import { Button } from "@/components/ui/button";
 import { useRouter } from "@/hooks/useRouter";
+import { useAuth } from "@/contexts/AuthContext";
+import { canAccessPath } from "@/lib/accessControl";
 import { CapitalRemunerationsPage } from "@/pages/CapitalRemunerationsPage";
 import { ContributionDetailPage } from "@/pages/ContributionDetailPage";
 import { ContributionsPage } from "@/pages/ContributionsPage";
@@ -17,9 +19,11 @@ import { RevenuePage } from "@/pages/RevenuePage";
 import { RevenueDivergencesPage, RevenueMonthlySummaryPage, RevenuePendingPage } from "@/pages/RevenueWorkPages";
 import { SalesBankValidationPage, SalesDetailPage, SalesDivergencesPage, SalesPage } from "@/pages/SalesPages";
 import { SettingsPage } from "@/pages/SettingsPage";
+import { LoginPage } from "@/pages/LoginPage";
 import { SyncPage } from "@/pages/SyncPage";
 import { TreasuryIncomingListPage } from "@/pages/TreasuryIncomingPages";
 import { TreasuryPage, type TreasurySection } from "@/pages/TreasuryPage";
+import { UsersPage } from "@/pages/UsersPage";
 
 function legacyRedirect(path: string): string | null {
   if (path === "/") return "/dashboard";
@@ -49,9 +53,17 @@ function legacyRedirect(path: string): string | null {
 
 function App() {
   const { path, navigate } = useRouter();
+  const { status, user, logout } = useAuth();
   const redirect = legacyRedirect(path); const effective = redirect ?? path;
   useEffect(() => { if (redirect) navigate(redirect, true); }, [redirect, navigate]);
-  return <AdminShell path={effective} navigate={navigate}>{resolveRoute(effective, navigate)}</AdminShell>;
+  useEffect(() => {
+    if (status === "anonymous" && path !== "/login") navigate("/login", true);
+    if (status === "authenticated" && path === "/login") navigate("/dashboard", true);
+  }, [status, path, navigate]);
+  if (status === "loading") return <main className="min-h-screen bg-background p-8"><LoadingState label="Verificando sessão segura…" /></main>;
+  if (status === "anonymous" || !user) return <LoginPage onAuthenticated={() => navigate("/dashboard", true)} />;
+  if (!canAccessPath(user.role, effective)) return <AdminShell path={effective} navigate={navigate} user={user} onLogout={async () => { await logout(); navigate("/login", true); }}><EmptyState title="Acesso não autorizado" description="Seu perfil não possui permissão para acessar esta área administrativa." action={<Button onClick={() => navigate("/dashboard")}>Ir para o dashboard</Button>} /></AdminShell>;
+  return <AdminShell path={effective} navigate={navigate} user={user} onLogout={async () => { await logout(); navigate("/login", true); }}>{resolveRoute(effective, navigate)}</AdminShell>;
 }
 
 function resolveRoute(path: string, navigate: (path: string) => void) {
@@ -94,6 +106,7 @@ function resolveRoute(path: string, navigate: (path: string) => void) {
   if (reports[path]) return <ReportsPage section={reports[path]} navigate={navigate} />;
   if (path === "/sincronizacao") return <SyncPage />;
   if (path === "/configuracoes") return <SettingsPage />;
+  if (path === "/configuracoes/usuarios") return <UsersPage />;
   return <EmptyState title="Página não encontrada" action={<Button onClick={() => navigate("/dashboard")}><FileQuestion className="size-4" />Ir para o dashboard</Button>} />;
 }
 

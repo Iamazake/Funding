@@ -17,6 +17,8 @@ export interface SaleItem {
   id: string;
   contract_code: string | null;
   client_name: string | null;
+  client_name_source?: "CLIENT_CANONICAL" | "ECON_EMPRESTIMOS" | null;
+  client_name_divergent?: boolean;
   source_client_code: string | null;
   operation_date: string | null;
   release_date: string | null;
@@ -34,8 +36,11 @@ export interface SaleItem {
   data_quality_status: DataQuality;
   warning_count: number;
   divergence_count: number;
-  funding_status: "NOT_INFORMED";
-  bank_validation_status: "NOT_RECORDED";
+  funding_status: "NOT_INFORMED" | "INCOMPLETE" | "COMPLETE" | "OVERFUNDED" | "BASE_AMOUNT_UNAVAILABLE";
+  funding_identified_amount: string;
+  funding_difference: string | null;
+  funding_source_count: number;
+  bank_validation_status: "NOT_RECORDED" | "VALIDATED" | "DIVERGENT";
 }
 
 export interface SaleDetail extends SaleItem {
@@ -58,8 +63,11 @@ export interface SalesResponse {
 
 export interface RevenueItem {
   id: number;
+  revenue_identity_id?: string | null;
   contract_code: string | null;
   client_name: string | null;
+  client_name_source?: "CLIENT_CANONICAL" | "ECON_EMPRESTIMOS" | null;
+  client_name_divergent?: boolean;
   installment_code: string | null;
   due_date: string | null;
   payment_date: string | null;
@@ -74,6 +82,10 @@ export interface RevenueItem {
   data_quality_status: DataQuality;
   warning_count: number;
   divergence_count: number;
+  sale_id: string | null;
+  funding_status: SaleItem["funding_status"] | null;
+  distribution_status: "PENDING_FUNDING" | "READY" | "DISTRIBUTED" | "DIVERGENT" | "REVERSED";
+  primary_source_name: string | null;
 }
 
 export interface RevenueDetail extends RevenueItem {
@@ -81,8 +93,7 @@ export interface RevenueDetail extends RevenueItem {
   source_reference: string | null;
   warnings: QualityMessage[];
   divergences: QualityMessage[];
-  funding_status: "NOT_INFORMED";
-  bank_validation_status: "NOT_RECORDED";
+  bank_validation_status: "NOT_RECORDED" | "VALIDATED" | "DIVERGENT";
 }
 
 export interface RevenueResponse {

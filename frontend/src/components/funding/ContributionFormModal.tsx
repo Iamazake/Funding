@@ -6,41 +6,32 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { currencyInputToCents, formatCentsAmount } from "@/lib/formatters";
-import { calculateCapitalRemuneration } from "@/repositories/fundingRepository";
-import type { Contribution, ContributionInput, ContributionStatus, Investor } from "@/types/funding";
+import { brazilianMoneyToDecimal, decimalToBrazilianInput } from "@/lib/fundingFormat";
+import type { ContributionStatus, FundingContribution, FundingContributionInput, FundingInvestor } from "@/types/fundingApi";
 
-interface FormState { investorId: string; originalAmount: string; availableBalance: string; allocatedBalance: string; startDate: string; endDate: string; monthlyRateBps: string; status: ContributionStatus; notes: string; }
+interface FormState { investor_id: string; contribution_date: string; original_amount: string; monthly_rate: string; status: ContributionStatus; notes: string; }
 
-function initial(item: Contribution | undefined, investors: Investor[], presetInvestorId?: string): FormState {
-  if (item) return { investorId: item.investorId, originalAmount: formatCentsAmount(item.originalAmount), availableBalance: formatCentsAmount(item.availableBalance), allocatedBalance: formatCentsAmount(item.allocatedBalance), startDate: item.startDate, endDate: item.endDate, monthlyRateBps: String(item.monthlyRateBps), status: item.status, notes: item.notes };
-  return { investorId: presetInvestorId ?? investors[0]?.id ?? "", originalAmount: "", availableBalance: "", allocatedBalance: "0,00", startDate: "2026-07-31", endDate: "2027-07-31", monthlyRateBps: "200", status: "ATIVO", notes: "" };
+function initial(item: FundingContribution | undefined, investors: FundingInvestor[], presetInvestorId?: string): FormState {
+  if (item) return { investor_id: item.investor_id, contribution_date: item.contribution_date, original_amount: decimalToBrazilianInput(item.original_amount), monthly_rate: item.monthly_rate.replace(".", ","), status: item.status, notes: item.notes ?? "" };
+  return { investor_id: presetInvestorId ?? investors[0]?.id ?? "", contribution_date: new Date().toISOString().slice(0, 10), original_amount: "", monthly_rate: "0,02", status: "ACTIVE", notes: "" };
 }
 
-export function ContributionFormModal({ open, contribution, investors, presetInvestorId, onClose, onSave }: { open: boolean; contribution?: Contribution; investors: Investor[]; presetInvestorId?: string; onClose: () => void; onSave: (input: ContributionInput) => void }) {
+export function ContributionFormModal({ open, contribution, investors, presetInvestorId, saving = false, onClose, onSave }: { open: boolean; contribution?: FundingContribution; investors: FundingInvestor[]; presetInvestorId?: string; saving?: boolean; onClose: () => void; onSave: (input: FundingContributionInput) => void }) {
   const [form, setForm] = useState(() => initial(contribution, investors, presetInvestorId));
   useEffect(() => setForm(initial(contribution, investors, presetInvestorId)), [contribution, investors, presetInvestorId, open]);
-  const update = <K extends keyof FormState>(key: K, value: FormState[K]) => setForm((current) => ({ ...current, [key]: value }));
-  const original = currencyInputToCents(form.originalAmount); const available = currencyInputToCents(form.availableBalance || form.originalAmount); const allocated = currencyInputToCents(form.allocatedBalance);
-  const rate = Number.parseInt(form.monthlyRateBps, 10); const validRate = Number.isInteger(rate) && rate >= 0;
-  const valid = Boolean(form.investorId && original && centsPositive(original) && available !== null && allocated !== null && validRate && form.startDate && form.endDate >= form.startDate && BigInt(available ?? "0") + BigInt(allocated ?? "0") <= BigInt(original ?? "0"));
-  const expected = original !== null && validRate ? calculateCapitalRemuneration(original, rate) : "0";
-  const submit = () => { if (!valid || original === null || available === null || allocated === null) return; onSave({ investorId: form.investorId, originalAmount: original, availableBalance: available, allocatedBalance: allocated, startDate: form.startDate, endDate: form.endDate, monthlyRateBps: rate, status: form.status, notes: form.notes }); };
-  return <Modal open={open} title={contribution ? `Editar ${contribution.code}` : "Novo aporte"} description="Taxa em basis points; remuneração calculada sobre o valor originalmente aportado." onClose={onClose} footer={<><Button variant="outline" onClick={onClose}>Cancelar</Button><Button disabled={!valid} onClick={submit}>Salvar aporte</Button></>}>
+  const amount = brazilianMoneyToDecimal(form.original_amount);
+  const rate = form.monthly_rate.trim().replace(",", ".");
+  const validRate = /^0(\.\d{1,10})?$|^1(\.0{1,10})?$/.test(rate);
+  const valid = Boolean(form.investor_id && form.contribution_date && amount && BigInt(amount.replace(".", "")) > 0n && validRate);
+  const submit = () => { if (valid && amount) onSave({ investor_id: form.investor_id, contribution_date: form.contribution_date, original_amount: amount, monthly_rate: rate, status: form.status, notes: form.notes || null }); };
+  return <Modal open={open} title={contribution ? `Editar ${contribution.code}` : "Novo aporte"} description="Taxa armazenada como fração decimal: 2% a.m. = 0,02. O valor original fica auditado." onClose={onClose} footer={<><Button variant="outline" onClick={onClose}>Cancelar</Button><Button disabled={!valid || saving} onClick={submit}>{saving ? "Salvando…" : "Salvar aporte"}</Button></>}>
     <div className="grid gap-4 sm:grid-cols-2">
-      <FormField label="Investidor" className="sm:col-span-2"><Select className="w-full" value={form.investorId} onChange={(event) => update("investorId", event.target.value)}>{investors.map((item) => <option key={item.id} value={item.id}>{item.code} · {item.name}</option>)}</Select></FormField>
-      <FormField label="Valor originalmente aportado"><Input inputMode="decimal" value={form.originalAmount} onChange={(event) => { update("originalAmount", event.target.value); if (!contribution) update("availableBalance", event.target.value); }} /></FormField>
-      <FormField label="Taxa mensal (basis points)" hint="2% = 200 bps"><Input inputMode="numeric" value={form.monthlyRateBps} onChange={(event) => update("monthlyRateBps", event.target.value.replace(/\D/g, ""))} /></FormField>
-      <FormField label="Remuneração mensal calculada"><Input value={formatCentsAmount(expected)} disabled /></FormField>
-      <FormField label="Base de cálculo"><Input value="Valor originalmente aportado" disabled /></FormField>
-      <FormField label="Saldo disponível"><Input inputMode="decimal" value={form.availableBalance} onChange={(event) => update("availableBalance", event.target.value)} /></FormField>
-      <FormField label="Saldo alocado"><Input inputMode="decimal" value={form.allocatedBalance} onChange={(event) => update("allocatedBalance", event.target.value)} /></FormField>
-      <FormField label="Data inicial"><Input type="date" value={form.startDate} onChange={(event) => update("startDate", event.target.value)} /></FormField>
-      <FormField label="Data final"><Input type="date" value={form.endDate} onChange={(event) => update("endDate", event.target.value)} /></FormField>
-      <FormField label="Status"><Select value={form.status} onChange={(event) => update("status", event.target.value as ContributionStatus)}>{["PENDENTE", "ATIVO", "PARCIALMENTE_ALOCADO", "TOTALMENTE_ALOCADO", "EM_LIQUIDACAO", "LIQUIDADO", "LIQUIDADO_ANTECIPADAMENTE", "CANCELADO"].map((status) => <option key={status} value={status}>{status.replaceAll("_", " ")}</option>)}</Select></FormField>
-      <FormField label="Observações" className="sm:col-span-2"><Textarea value={form.notes} onChange={(event) => update("notes", event.target.value)} /></FormField>
+      <FormField label="Investidor" className="sm:col-span-2"><Select value={form.investor_id} onChange={(event) => setForm((current) => ({ ...current, investor_id: event.target.value }))}>{investors.map((item) => <option key={item.id} value={item.id}>{item.code} · {item.name}</option>)}</Select></FormField>
+      <FormField label="Valor original"><Input inputMode="decimal" value={form.original_amount} disabled={Boolean(contribution && !contribution.original_amount_editable)} onChange={(event) => setForm((current) => ({ ...current, original_amount: event.target.value }))} /></FormField>
+      <FormField label="Taxa mensal (fração)" hint="2% = 0,02"><Input inputMode="decimal" value={form.monthly_rate} onChange={(event) => setForm((current) => ({ ...current, monthly_rate: event.target.value }))} /></FormField>
+      <FormField label="Data do aporte"><Input type="date" value={form.contribution_date} onChange={(event) => setForm((current) => ({ ...current, contribution_date: event.target.value }))} /></FormField>
+      <FormField label="Status"><Select value={form.status} onChange={(event) => setForm((current) => ({ ...current, status: event.target.value as ContributionStatus }))}><option value="ACTIVE">Ativo</option><option value="INACTIVE">Inativo</option><option value="CLOSED">Encerrado</option></Select></FormField>
+      <FormField label="Observações" className="sm:col-span-2"><Textarea value={form.notes} onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))} /></FormField>
     </div>
   </Modal>;
 }
-
-function centsPositive(value: string): boolean { return BigInt(value) > 0n; }

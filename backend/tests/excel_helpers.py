@@ -6,7 +6,7 @@ from typing import Any
 
 from openpyxl import Workbook
 
-from app.services.excel.contract import APPROVED_COLUMNS, AUTHORIZED_SHEETS
+from app.services.excel.contract import APPROVED_COLUMNS, AUTHORIZED_SHEETS, OPTIONAL_COLUMNS
 
 VALID_CPF = "52998224725"
 
@@ -36,6 +36,7 @@ def default_rows() -> dict[str, dict[str, Any]]:
         "ECON_EMPRESTIMOS": {
             "COD_CONTRATO": "CTR-1",
             "COD_CLIENTE": "CLI-1",
+            "NOME_CLIENTE": "Cliente Sintético",
             "NUM_CPF": VALID_CPF,
             "DT_OPERACAO": "01/01/2026",
             "VENCIMENTO1": "01/02/2026",
@@ -90,7 +91,7 @@ def create_workbook(
         if sheet_name == missing_sheet:
             continue
         worksheet = workbook.create_sheet(sheet_name)
-        headers = list(APPROVED_COLUMNS[sheet_name])
+        headers = list(APPROVED_COLUMNS[sheet_name] + OPTIONAL_COLUMNS.get(sheet_name, ()))
         if missing_column and missing_column[0] == sheet_name:
             headers.remove(missing_column[1])
         worksheet.append(headers)

@@ -7,4 +7,3 @@ class HealthResponse(BaseModel):
     status: Literal["ok", "error"]
     api: Literal["ok"]
     database: Literal["connected", "unavailable"]
-

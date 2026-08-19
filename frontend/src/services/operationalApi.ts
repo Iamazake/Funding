@@ -1,4 +1,4 @@
-import { API_URL } from "@/lib/api";
+import { API_URL, notifyIfUnauthorized } from "@/lib/api";
 import type {
   RevenueDetail,
   RevenueFilters,
@@ -18,7 +18,8 @@ function queryString(filters: object): string {
 }
 
 async function request<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, { headers: { Accept: "application/json" } });
+  const response = await fetch(`${API_URL}${path}`, { credentials: "include", headers: { Accept: "application/json" } });
+  notifyIfUnauthorized(response.status);
   if (!response.ok) {
     throw new Error(response.status === 404 ? "Registro operacional não encontrado." : "Não foi possível conectar à API operacional.");
   }

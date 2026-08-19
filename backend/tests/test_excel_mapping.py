@@ -75,8 +75,7 @@ def test_multiple_payment_movements_are_preserved_as_information(tmp_path: Path)
 
     assert len(imported.rows["ECON_AMORTIZACOES"]) == 2
     assert any(
-        issue.inconsistency_type == "multiple_payment_movements"
-        and issue.severity == "info"
+        issue.inconsistency_type == "multiple_payment_movements" and issue.severity == "info"
         for issue in imported.inconsistencies
     )
     assert all(row.validation_status == "valid" for row in imported.rows["ECON_AMORTIZACOES"])
@@ -119,6 +118,8 @@ def test_all_parsed_numbers_are_decimal_or_integer_never_float(tmp_path: Path) -
     loan = imported.rows["ECON_EMPRESTIMOS"][0]
     assert isinstance(loan.data["vl_principal"], Decimal)
     assert isinstance(loan.data["taxa_juros"], Decimal)
+    assert loan.data["nome_cliente"] == "CLIENTE SINTÉTICO"
+    assert loan.raw_data["NOME_CLIENTE"] == "Cliente Sintético"
 
 
 def test_valid_cpf_is_normalized_in_every_sheet(tmp_path: Path) -> None:
@@ -211,7 +212,6 @@ def test_missing_essential_identifier_is_invalid(tmp_path: Path) -> None:
 
     assert row.validation_status == "invalid"
     assert any(
-        issue.inconsistency_type == "missing_required_identifier"
-        and issue.severity == "invalid"
+        issue.inconsistency_type == "missing_required_identifier" and issue.severity == "invalid"
         for issue in imported.inconsistencies
     )

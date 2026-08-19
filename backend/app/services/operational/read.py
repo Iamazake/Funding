@@ -9,6 +9,7 @@ from typing import Any, Literal
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.identity import OperationalRevenueSnapshot, OperationalSaleSnapshot
 from app.models.normalized import (
     OperationalClient,
     OperationalContract,
@@ -17,7 +18,8 @@ from app.models.normalized import (
     OperationalPromotion,
     OperationalQualityLink,
 )
-from app.models.operational import DataInconsistency
+from app.models.operational import DataInconsistency, ExcelEconEmprestimosRow
+from app.models.treasury import TreasuryBankValidation
 from app.schemas.operational import (
     PageMeta,
     QualityMessage,
@@ -30,6 +32,8 @@ from app.schemas.operational import (
     SalesPage,
     SaleSummary,
 )
+from app.services.funding.ledger import allocation_summaries, funding_status
+from app.services.funding.revenue import RevenueFundingInput, revenue_funding_summaries
 
 QUALITY_ORDER = {"VALID": 0, "WARNING": 1, "DIVERGENT": 2, "INVALID": 3}
 ZERO = Decimal("0.00")
@@ -93,6 +97,7 @@ class _RevenueRecord:
     installment_id: int
     payment_marker: str | None
     source_reference: str | None
+    base_amount: Decimal | None
 
 
 class OperationalReadRepository:
@@ -108,9 +113,7 @@ class OperationalReadRepository:
             released_amount=_sum(row.item.released_amount for row in rows),
             financed_amount=_sum(row.item.financed_amount for row in rows),
             warning_contracts=sum(row.item.data_quality_status == "WARNING" for row in rows),
-            divergent_contracts=sum(
-                row.item.data_quality_status == "DIVERGENT" for row in rows
-            ),
+            divergent_contracts=sum(row.item.data_quality_status == "DIVERGENT" for row in rows),
         )
         page_rows, meta = _paginate(rows, query.page, query.page_size)
         quality = await self._quality_for_sales(page_rows)
@@ -142,9 +145,7 @@ class OperationalReadRepository:
             discount_amount=_sum(row.item.discount_amount for row in rows),
             pending_records=sum(row.item.payment_date is None for row in rows),
             warning_records=sum(row.item.data_quality_status == "WARNING" for row in rows),
-            divergent_records=sum(
-                row.item.data_quality_status == "DIVERGENT" for row in rows
-            ),
+            divergent_records=sum(row.item.data_quality_status == "DIVERGENT" for row in rows),
         )
         page_rows, meta = _paginate(rows, query.page, query.page_size)
         quality = await self._quality_for_installments(page_rows)
@@ -171,32 +172,49 @@ class OperationalReadRepository:
 
     async def _load_sales(self) -> list[_SaleRecord]:
         promotion_id = await self._current_promotion_id()
+        loan_names = await self._loan_display_names(promotion_id)
         contract_rows = (
             await self._session.execute(
-                select(OperationalContract, OperationalClient)
+                select(OperationalContract, OperationalClient, OperationalSaleSnapshot)
                 .outerjoin(OperationalClient, OperationalClient.id == OperationalContract.client_id)
+                .join(
+                    OperationalSaleSnapshot,
+                    OperationalSaleSnapshot.contract_id == OperationalContract.id,
+                )
                 .where(OperationalContract.promotion_id == promotion_id)
             )
         ).all()
         loan_rows = (
             await self._session.execute(
-                select(OperationalLoan, OperationalClient)
+                select(OperationalLoan, OperationalClient, OperationalSaleSnapshot)
                 .outerjoin(OperationalClient, OperationalClient.id == OperationalLoan.client_id)
+                .join(
+                    OperationalSaleSnapshot,
+                    OperationalSaleSnapshot.loan_id == OperationalLoan.id,
+                )
                 .where(OperationalLoan.promotion_id == promotion_id)
             )
         ).all()
-        loans_by_contract: dict[int, tuple[OperationalLoan, OperationalClient | None]] = {}
-        orphan_loans: list[tuple[OperationalLoan, OperationalClient | None]] = []
-        for loan, client in loan_rows:
+        loans_by_contract: dict[
+            int, tuple[OperationalLoan, OperationalClient | None, OperationalSaleSnapshot]
+        ] = {}
+        orphan_loans: list[
+            tuple[OperationalLoan, OperationalClient | None, OperationalSaleSnapshot]
+        ] = []
+        for loan, client, snapshot in loan_rows:
             if loan.contract_id is None:
-                orphan_loans.append((loan, client))
+                orphan_loans.append((loan, client, snapshot))
             else:
-                loans_by_contract[loan.contract_id] = (loan, client)
+                loans_by_contract[loan.contract_id] = (loan, client, snapshot)
 
         records = []
-        for contract, client in contract_rows:
+        for contract, client, snapshot in contract_rows:
             matched = loans_by_contract.get(contract.id)
             loan = matched[0] if matched else None
+            client_name, client_name_source, client_name_divergent = _display_client_name(
+                client.name if client else None,
+                loan_names.get(contract.contract_code or ""),
+            )
             quality = _highest_quality(
                 contract.data_quality_status,
                 loan.data_quality_status if loan is not None else "VALID",
@@ -204,9 +222,11 @@ class OperationalReadRepository:
             records.append(
                 _SaleRecord(
                     SaleItem(
-                        id=f"contract:{contract.id}",
+                        id=f"sale:{snapshot.sale_identity_id}",
                         contract_code=contract.contract_code,
-                        client_name=client.name if client else None,
+                        client_name=client_name,
+                        client_name_source=client_name_source,
+                        client_name_divergent=client_name_divergent,
                         source_client_code=contract.source_client_code,
                         operation_date=contract.operation_date,
                         release_date=contract.release_date,
@@ -228,13 +248,19 @@ class OperationalReadRepository:
                     contract.client_id,
                 )
             )
-        for loan, client in orphan_loans:
+        for loan, client, snapshot in orphan_loans:
+            client_name, client_name_source, client_name_divergent = _display_client_name(
+                client.name if client else None,
+                loan_names.get(loan.contract_code or ""),
+            )
             records.append(
                 _SaleRecord(
                     SaleItem(
-                        id=f"loan:{loan.id}",
+                        id=f"sale:{snapshot.sale_identity_id}",
                         contract_code=loan.contract_code,
-                        client_name=client.name if client else None,
+                        client_name=client_name,
+                        client_name_source=client_name_source,
+                        client_name_divergent=client_name_divergent,
                         source_client_code=loan.source_client_code,
                         operation_date=loan.operation_date,
                         release_date=None,
@@ -256,46 +282,172 @@ class OperationalReadRepository:
                     loan.client_id,
                 )
             )
+        summaries = await allocation_summaries(
+            self._session, [record.item.id for record in records]
+        )
+        for record in records:
+            identified, source_count = summaries.get(record.item.id, (ZERO, 0))
+            status, difference = funding_status(
+                record.item.released_amount,
+                identified,
+                source_count > 0,
+            )
+            record.item = record.item.model_copy(
+                update={
+                    "funding_status": status,
+                    "funding_identified_amount": identified,
+                    "funding_difference": difference,
+                    "funding_source_count": source_count,
+                }
+            )
+        validations = await self._bank_validation_statuses([record.item.id for record in records])
+        for record in records:
+            record.item = record.item.model_copy(
+                update={"bank_validation_status": validations.get(record.item.id, "NOT_RECORDED")}
+            )
         return records
 
     async def _load_revenue(self) -> list[_RevenueRecord]:
         promotion_id = await self._current_promotion_id()
+        loan_names = await self._loan_display_names(promotion_id)
         rows = (
             await self._session.execute(
-                select(OperationalInstallment, OperationalContract, OperationalClient)
+                select(
+                    OperationalInstallment,
+                    OperationalContract,
+                    OperationalClient,
+                    OperationalRevenueSnapshot,
+                    OperationalSaleSnapshot,
+                )
                 .outerjoin(
                     OperationalContract,
                     OperationalContract.id == OperationalInstallment.contract_id,
                 )
                 .outerjoin(OperationalClient, OperationalClient.id == OperationalContract.client_id)
+                .join(
+                    OperationalRevenueSnapshot,
+                    OperationalRevenueSnapshot.installment_id == OperationalInstallment.id,
+                )
+                .outerjoin(
+                    OperationalSaleSnapshot,
+                    (OperationalSaleSnapshot.promotion_id == OperationalInstallment.promotion_id)
+                    & (OperationalSaleSnapshot.contract_id == OperationalInstallment.contract_id),
+                )
                 .where(OperationalInstallment.promotion_id == promotion_id)
             )
         ).all()
-        return [
-            _RevenueRecord(
-                RevenueItem(
-                    id=installment.id,
-                    contract_code=installment.contract_code,
-                    client_name=client.name if client else None,
-                    installment_code=installment.installment_code,
-                    due_date=installment.due_date,
-                    payment_date=installment.payment_date,
-                    expected_amount=installment.expected_amount,
-                    paid_amount=installment.paid_amount,
-                    principal_component=installment.principal_component,
-                    interest_component=installment.interest_component,
-                    discount_amount=installment.discount_amount,
-                    installment_status=installment.installment_status,
-                    situation=installment.situation,
-                    anticipation_marker=installment.anticipation_marker,
-                    data_quality_status=installment.data_quality_status,
-                ),
-                installment.id,
-                installment.payment_marker_original,
-                installment.source_key,
+        records = []
+        for installment, contract, client, revenue_snapshot, sale_snapshot in rows:
+            client_name, client_name_source, client_name_divergent = _display_client_name(
+                client.name if client else None,
+                loan_names.get(installment.contract_code or ""),
             )
-            for installment, _contract, client in rows
-        ]
+            records.append(
+                _RevenueRecord(
+                    RevenueItem(
+                        id=installment.id,
+                        revenue_identity_id=revenue_snapshot.revenue_identity_id,
+                        contract_code=installment.contract_code,
+                        client_name=client_name,
+                        client_name_source=client_name_source,
+                        client_name_divergent=client_name_divergent,
+                        installment_code=installment.installment_code,
+                        due_date=installment.due_date,
+                        payment_date=installment.payment_date,
+                        expected_amount=installment.expected_amount,
+                        paid_amount=installment.paid_amount,
+                        principal_component=installment.principal_component,
+                        interest_component=installment.interest_component,
+                        discount_amount=installment.discount_amount,
+                        installment_status=installment.installment_status,
+                        situation=installment.situation,
+                        anticipation_marker=installment.anticipation_marker,
+                        data_quality_status=installment.data_quality_status,
+                        sale_id=(
+                            f"sale:{sale_snapshot.sale_identity_id}" if sale_snapshot else None
+                        ),
+                    ),
+                    installment.id,
+                    installment.payment_marker_original,
+                    installment.source_key,
+                    contract.released_amount if contract else None,
+                )
+            )
+        summaries = await revenue_funding_summaries(
+            self._session,
+            [
+                RevenueFundingInput(
+                    revenue_id=record.item.revenue_identity_id,
+                    sale_id=record.item.sale_id,
+                    base_amount=record.base_amount,
+                    payment_date=record.item.payment_date,
+                    principal_amount=record.item.principal_component,
+                    interest_amount=record.item.interest_component,
+                    discount_amount=record.item.discount_amount,
+                )
+                for record in records
+            ],
+        )
+        for record in records:
+            summary = summaries[record.item.revenue_identity_id]
+            record.item = record.item.model_copy(
+                update={
+                    "funding_status": summary.funding_status,
+                    "distribution_status": summary.distribution_status,
+                    "primary_source_name": summary.primary_source_name,
+                }
+            )
+        validations = await self._bank_validation_statuses(
+            [
+                f"revenue:{record.item.revenue_identity_id}"
+                for record in records
+                if record.item.revenue_identity_id is not None
+            ]
+        )
+        for record in records:
+            key = f"revenue:{record.item.revenue_identity_id}"
+            record.item = record.item.model_copy(
+                update={"bank_validation_status": validations.get(key, "NOT_RECORDED")}
+            )
+        return records
+
+    async def _loan_display_names(self, promotion_id: int) -> dict[str, tuple[str | None, bool]]:
+        rows = (
+            await self._session.execute(
+                select(OperationalLoan.contract_code, ExcelEconEmprestimosRow.nome_cliente)
+                .join(
+                    ExcelEconEmprestimosRow,
+                    ExcelEconEmprestimosRow.id == OperationalLoan.source_loan_row_id,
+                )
+                .where(OperationalLoan.promotion_id == promotion_id)
+            )
+        ).all()
+        names_by_contract: dict[str, set[str]] = {}
+        for contract_code, name in rows:
+            normalized = (name or "").strip()
+            if not contract_code or not normalized:
+                continue
+            names_by_contract.setdefault(contract_code, set()).add(normalized)
+        return {
+            contract_code: (next(iter(names)) if len(names) == 1 else None, len(names) > 1)
+            for contract_code, names in names_by_contract.items()
+        }
+
+    async def _bank_validation_statuses(self, movement_keys: list[str]) -> dict[str, str]:
+        if not movement_keys:
+            return {}
+        rows = (
+            await self._session.execute(
+                select(
+                    TreasuryBankValidation.movement_key,
+                    TreasuryBankValidation.status,
+                ).where(
+                    TreasuryBankValidation.movement_key.in_(movement_keys),
+                    TreasuryBankValidation.is_current.is_(True),
+                )
+            )
+        ).all()
+        return dict(rows)
 
     async def _current_promotion_id(self) -> int:
         promotion_id = await self._session.scalar(
@@ -374,9 +526,7 @@ class OperationalReadRepository:
                 query.payment_from is None
                 or _date_at_least(row.item.payment_date, query.payment_from)
             )
-            and (
-                query.payment_to is None or _date_at_most(row.item.payment_date, query.payment_to)
-            )
+            and (query.payment_to is None or _date_at_most(row.item.payment_date, query.payment_to))
             and (query.quality is None or row.item.data_quality_status == query.quality)
         ]
 
@@ -393,9 +543,7 @@ class OperationalReadRepository:
     async def _quality_for_installments(
         self, rows: list[_RevenueRecord]
     ) -> dict[tuple[str, int], list[QualityMessage]]:
-        return await self._load_quality(
-            {"installment": {row.installment_id for row in rows}}
-        )
+        return await self._load_quality({"installment": {row.installment_id for row in rows}})
 
     async def _load_quality(
         self, ids: dict[str, set[int]]
@@ -453,9 +601,7 @@ class OperationalReadRepository:
         return row.item.model_copy(
             update={
                 "warning_count": sum(message.severity == "WARNING" for message in messages),
-                "divergence_count": sum(
-                    message.severity == "DIVERGENT" for message in messages
-                ),
+                "divergence_count": sum(message.severity == "DIVERGENT" for message in messages),
             }
         )
 
@@ -483,9 +629,7 @@ class OperationalReadRepository:
         return row.item.model_copy(
             update={
                 "warning_count": sum(message.severity == "WARNING" for message in messages),
-                "divergence_count": sum(
-                    message.severity == "DIVERGENT" for message in messages
-                ),
+                "divergence_count": sum(message.severity == "DIVERGENT" for message in messages),
             }
         )
 
@@ -508,6 +652,22 @@ def _sum(values) -> Decimal:
 
 def _normalized(value: str | None) -> str:
     return value.strip().casefold() if value else ""
+
+
+def _display_client_name(
+    canonical_name: str | None,
+    loan_source: tuple[str | None, bool] | None,
+) -> tuple[str | None, str | None, bool]:
+    canonical = (canonical_name or "").strip() or None
+    loan_name, source_divergent = loan_source or (None, False)
+    divergent = source_divergent or bool(
+        canonical and loan_name and _normalized(canonical) != _normalized(loan_name)
+    )
+    if canonical:
+        return canonical, "CLIENT_CANONICAL", divergent
+    if loan_name and not source_divergent:
+        return loan_name, "ECON_EMPRESTIMOS", False
+    return None, None, divergent
 
 
 def _date_at_least(value: date | None, minimum: date) -> bool:

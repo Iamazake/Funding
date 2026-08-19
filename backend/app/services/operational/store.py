@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from time import monotonic_ns
 
 from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import DBAPIError
 
 from app.models.normalized import (
     OperationalClient,
@@ -24,6 +24,7 @@ from app.models.operational import (
     OperationalImportBatch,
 )
 from app.services.excel.store import SessionFactory
+from app.services.operational.identity import CanonicalIdentityResolver
 from app.services.operational.promotion import (
     ExistingPromotion,
     MirrorBatch,
@@ -47,30 +48,20 @@ class SqlAlchemyOperationalPromotionRepository:
                 await session.execute(
                     select(OperationalPromotion).where(
                         OperationalPromotion.source_batch_id == batch_id,
-                        OperationalPromotion.status == "succeeded",
                     )
                 )
             ).scalar_one_or_none()
             if promotion is None:
                 return None
-            return ExistingPromotion(promotion.id, promotion.summary)
+            return ExistingPromotion(promotion.id, promotion.summary, promotion.status)
 
     async def load_batch(self, batch_id: int) -> MirrorBatch:
-        async with self._session_factory() as session:
-            clients = await self._rows(session, ExcelBcliCadastroRow, batch_id)
-            contracts = await self._rows(session, ExcelDfenContratoRow, batch_id)
-            loans = await self._rows(session, ExcelEconEmprestimosRow, batch_id)
-            amortizations = await self._rows(session, ExcelEconAmortizacoesRow, batch_id)
-            inconsistencies = list(
-                (
-                    await session.scalars(
-                        select(DataInconsistency)
-                        .where(DataInconsistency.import_batch_id == batch_id)
-                        .order_by(DataInconsistency.id)
-                    )
-                ).all()
-            )
-            return MirrorBatch(clients, contracts, loans, amortizations, inconsistencies)
+        clients = await self._rows(ExcelBcliCadastroRow, batch_id)
+        contracts = await self._rows(ExcelDfenContratoRow, batch_id)
+        loans = await self._rows(ExcelEconEmprestimosRow, batch_id)
+        amortizations = await self._rows(ExcelEconAmortizacoesRow, batch_id)
+        inconsistencies = await self._rows(DataInconsistency, batch_id)
+        return MirrorBatch(clients, contracts, loans, amortizations, inconsistencies)
 
     async def persist(
         self,
@@ -85,22 +76,16 @@ class SqlAlchemyOperationalPromotionRepository:
                 await session.execute(
                     select(OperationalPromotion).where(
                         OperationalPromotion.source_batch_id == batch_id,
-                        OperationalPromotion.status == "succeeded",
                     )
                 )
             ).scalar_one_or_none()
             if existing is not None:
-                return ExistingPromotion(existing.id, existing.summary)
+                return ExistingPromotion(existing.id, existing.summary, existing.status)
 
-            await session.execute(
-                update(OperationalPromotion)
-                .where(OperationalPromotion.is_current.is_(True))
-                .values(is_current=False)
-            )
             promotion = OperationalPromotion(
                 source_batch_id=batch_id,
-                status="succeeded",
-                is_current=True,
+                status="identity_matching",
+                is_current=False,
                 summary=dataset.summary,
                 duration_ms=0,
                 started_at=started_at,
@@ -221,18 +206,58 @@ class SqlAlchemyOperationalPromotionRepository:
                     )
                 )
             session.add_all(quality_links)
+            identity_report = await CanonicalIdentityResolver(session).resolve(promotion)
+            promotion.summary = {
+                **dataset.summary,
+                "identity_resolution": identity_report.as_dict(),
+            }
+            if identity_report.review_required:
+                promotion.status = "identity_review_required"
+                promotion.is_current = False
+            else:
+                await session.execute(
+                    update(OperationalPromotion)
+                    .where(
+                        OperationalPromotion.is_current.is_(True),
+                        OperationalPromotion.id != promotion.id,
+                    )
+                    .values(is_current=False)
+                )
+                promotion.status = "succeeded"
+                promotion.is_current = True
             promotion.completed_at = datetime.now(UTC)
             promotion.duration_ms = max(0, (monotonic_ns() - started_ns) // 1_000_000)
-            return ExistingPromotion(promotion.id, promotion.summary)
+            return ExistingPromotion(promotion.id, promotion.summary, promotion.status)
 
-    @staticmethod
-    async def _rows(session: AsyncSession, model, batch_id: int):
-        return list(
-            (
-                await session.scalars(
-                    select(model)
-                    .where(model.import_batch_id == batch_id)
-                    .order_by(model.source_row_number, model.id)
-                )
-            ).all()
-        )
+    async def _rows(self, model, batch_id: int):
+        # Keep promotion reads bounded. Mirrors include JSON evidence and can be
+        # large enough for a single asyncpg result frame to be interrupted by
+        # remote poolers. A short-lived read session per page avoids depending
+        # on one long SSL stream; retrying a SELECT page is side-effect free.
+        page_size = 250
+        offset = 0
+        rows = []
+        while True:
+            for attempt in range(3):
+                try:
+                    async with self._session_factory() as session:
+                        page = list(
+                            (
+                                await session.scalars(
+                                    select(model)
+                                    .where(model.import_batch_id == batch_id)
+                                    .order_by(model.source_row_number, model.id)
+                                    .limit(page_size)
+                                    .offset(offset)
+                                )
+                            ).all()
+                        )
+                        await session.invalidate()
+                    break
+                except DBAPIError:
+                    if attempt == 2:
+                        raise
+            rows.extend(page)
+            if len(page) < page_size:
+                return rows
+            offset += page_size

@@ -76,5 +76,6 @@ APPROVED_COLUMNS: dict[str, tuple[str, ...]] = {
 }
 
 OPTIONAL_COLUMNS: dict[str, tuple[str, ...]] = {
+    "ECON_EMPRESTIMOS": ("NOME_CLIENTE",),
     "ECON_AMORTIZACOES": ("CHAVE",),
 }

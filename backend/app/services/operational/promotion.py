@@ -49,6 +49,7 @@ class SourceBatchNotSucceededError(OperationalPromotionError):
 class ExistingPromotion:
     id: int
     summary: dict[str, Any]
+    status: str = "succeeded"
 
 
 @dataclass(slots=True)
@@ -359,6 +360,14 @@ class OperationalPromotionService:
 
         existing = await self._repository.get_succeeded_promotion(batch_id)
         if existing is not None:
+            if existing.status == "identity_review_required":
+                return PromotionReport(
+                    existing.id,
+                    batch_id,
+                    "identity_review_required",
+                    True,
+                    existing.summary,
+                )
             return PromotionReport(
                 existing.id, batch_id, "already_promoted", True, existing.summary
             )
@@ -373,7 +382,13 @@ class OperationalPromotionService:
             started_at=started_at,
             started_ns=started_ns,
         )
-        return PromotionReport(promotion.id, batch_id, "succeeded", False, promotion.summary)
+        return PromotionReport(
+            promotion.id,
+            batch_id,
+            promotion.status,
+            False,
+            promotion.summary,
+        )
 
 
 def _resolve_client(

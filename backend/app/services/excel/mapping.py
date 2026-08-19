@@ -228,6 +228,8 @@ class WorkbookMapper:
             data = {
                 "cod_contrato": normalize_code(values["COD_CONTRATO"]),
                 "cod_cliente": normalize_code(values["COD_CLIENTE"]),
+                "nome_cliente_original": _text(values.get("NOME_CLIENTE")),
+                "nome_cliente": normalize_name(values.get("NOME_CLIENTE")),
                 "cpf_original": _text(values["NUM_CPF"]),
                 "cpf_normalized": capture(
                     "NUM_CPF",
@@ -505,9 +507,7 @@ class WorkbookMapper:
         )
 
 
-def _issue_payload(
-    field_name: str, issue: ParseIssue, severity: str
-) -> dict[str, str | None]:
+def _issue_payload(field_name: str, issue: ParseIssue, severity: str) -> dict[str, str | None]:
     return {
         "type": issue.kind,
         "field": field_name,

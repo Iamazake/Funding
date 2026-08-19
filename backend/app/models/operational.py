@@ -155,6 +155,8 @@ class ExcelEconEmprestimosRow(MirrorRowMixin, Base):
 
     cod_contrato: Mapped[str | None] = mapped_column(String(100), index=True)
     cod_cliente: Mapped[str | None] = mapped_column(String(100), index=True)
+    nome_cliente_original: Mapped[str | None] = mapped_column(Text)
+    nome_cliente: Mapped[str | None] = mapped_column(Text)
     cpf_original: Mapped[str | None] = mapped_column(Text)
     cpf_normalized: Mapped[str | None] = mapped_column(String(11), index=True)
     dt_operacao: Mapped[date | None] = mapped_column(Date)

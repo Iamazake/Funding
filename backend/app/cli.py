@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import sys
 
 from app.core.config import get_settings
 from app.core.database import SessionFactory, engine
+from app.services.auth import AuthService, BootstrapConfigurationError
 from app.services.excel.errors import OperationalExcelError, SourceConfigurationError
 from app.services.excel.source import LocalFileSource
 from app.services.excel.store import SqlAlchemyOperationalStore
 from app.services.excel.sync import OperationalExcelSyncService
+from app.services.operational.debt_continuity import preview_debt_continuity_migration
+from app.services.operational.identity import preview_current_identity_backfill
 from app.services.operational.promotion import (
     OperationalPromotionError,
     OperationalPromotionService,
@@ -34,6 +38,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Promove explicitamente um batch sucedido para a camada normalizada.",
     )
     promote_parser.add_argument("batch_id", type=int, help="ID explícito do batch de origem.")
+    subparsers.add_parser(
+        "preview-operational-identity-backfill",
+        help="Audita, sem escrever, o backfill canonico da promocao atual.",
+    )
+    subparsers.add_parser(
+        "preview-debt-continuity-migration",
+        help="Audita, sem escrever, a migration de continuidade da divida.",
+    )
+    subparsers.add_parser(
+        "bootstrap-admin",
+        help="Cria idempotentemente o primeiro ADMIN usando variáveis de ambiente.",
+    )
     return parser
 
 
@@ -69,6 +85,37 @@ async def _main_async(argv: list[str] | None = None) -> int:
         print(f"promotion_id={report.promotion_id}")
         print(f"source_batch_id={report.source_batch_id}")
         print(f"idempotent={str(report.idempotent).lower()}")
+        return 1 if report.status == "identity_review_required" else 0
+    if args.command == "preview-operational-identity-backfill":
+        async with SessionFactory() as session:
+            preview = await preview_current_identity_backfill(session)
+        print(json.dumps(preview, ensure_ascii=False, indent=2, default=str))
+        return 0
+    if args.command == "preview-debt-continuity-migration":
+        async with SessionFactory() as session:
+            preview = await preview_debt_continuity_migration(session)
+        print(json.dumps(preview, ensure_ascii=False, indent=2, default=str))
+        return 0
+    if args.command == "bootstrap-admin":
+        settings = get_settings()
+        password = settings.funding_bootstrap_admin_password
+        if not (
+            settings.funding_bootstrap_admin_name
+            and settings.funding_bootstrap_admin_email
+            and password is not None
+        ):
+            raise BootstrapConfigurationError(
+                "Configure FUNDING_BOOTSTRAP_ADMIN_NAME, "
+                "FUNDING_BOOTSTRAP_ADMIN_EMAIL e FUNDING_BOOTSTRAP_ADMIN_PASSWORD."
+            )
+        async with SessionFactory() as session:
+            user, created = await AuthService(session).bootstrap_admin(
+                settings.funding_bootstrap_admin_name,
+                settings.funding_bootstrap_admin_email,
+                password.get_secret_value(),
+            )
+        print(f"status={'created' if created else 'already_exists'}")
+        print(f"user_id={user.id}")
         return 0
     return 2
 
@@ -76,7 +123,12 @@ async def _main_async(argv: list[str] | None = None) -> int:
 async def _entrypoint(argv: list[str] | None = None) -> int:
     try:
         return await _main_async(argv)
-    except (OperationalExcelError, OperationalPromotionError) as exc:
+    except (
+        BootstrapConfigurationError,
+        OperationalExcelError,
+        OperationalPromotionError,
+        ValueError,
+    ) as exc:
         print(f"Erro: {exc}", file=sys.stderr)
         return 1
     finally:

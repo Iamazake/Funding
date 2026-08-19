@@ -40,6 +40,11 @@ class StagedFile:
         return self._token is _STAGED_FILE_TOKEN
 
 
+def _approved_staged_file(path: Path, metadata: FileMetadata, sha256: str) -> StagedFile:
+    """Internal bridge used by trusted FileSource implementations."""
+    return StagedFile(path, metadata, sha256, _STAGED_FILE_TOKEN)
+
+
 class FileSource(ABC):
     @abstractmethod
     def stage(self) -> Iterator[StagedFile]:
@@ -90,7 +95,7 @@ class LocalFileSource(FileSource):
                     "O arquivo operacional mudou durante a cópia; tente novamente."
                 )
             digest = _sha256(copy_path)
-            yield StagedFile(copy_path, before, digest, _STAGED_FILE_TOKEN)
+            yield _approved_staged_file(copy_path, before, digest)
 
 
 def _sha256(path: Path) -> str:

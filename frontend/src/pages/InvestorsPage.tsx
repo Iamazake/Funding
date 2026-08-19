@@ -1,8 +1,8 @@
-import { Eye, Pencil, Plus, Search, ShieldCheck, Users, WalletCards } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Eye, Pencil, Plus, Search, Users, WalletCards } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
 
 import { AppLink } from "@/components/app/AppLink";
-import { EmptyState } from "@/components/common/DataStates";
+import { EmptyState, ErrorState, LoadingState } from "@/components/common/DataStates";
 import { FeedbackBanner, type Feedback } from "@/components/common/FeedbackBanner";
 import { KpiCard } from "@/components/common/KpiCard";
 import { PageHeader } from "@/components/common/PageHeader";
@@ -13,40 +13,46 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { formatCentsAmount, formatDate } from "@/lib/formatters";
-import { sumCents } from "@/repositories/fundingRepository";
-import { fundingRepository, useFundingState } from "@/services/fundingService";
-import type { Investor, InvestorInput } from "@/types/funding";
+import { useAsyncData } from "@/hooks/useAsyncData";
+import { formatMoney } from "@/lib/formatters";
+import { fundingApi } from "@/services/fundingApi";
+import type { FundingInvestor, FundingInvestorInput } from "@/types/fundingApi";
 
 export function InvestorsPage({ navigate }: { navigate: (path: string) => void }) {
-  const state = useFundingState();
+  const loader = useCallback(async () => ({ investors: await fundingApi.listInvestors(), contributions: await fundingApi.listContributions() }), []);
+  const { state, reload } = useAsyncData(loader);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
-  const [type, setType] = useState("all");
-  const [risk, setRisk] = useState("all");
-  const [editing, setEditing] = useState<Investor | undefined>();
+  const [editing, setEditing] = useState<FundingInvestor>();
   const [formOpen, setFormOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
-  const filtered = useMemo(() => state.investors.filter((item) => {
-    const term = search.toLocaleLowerCase("pt-BR");
-    return (item.name.toLocaleLowerCase("pt-BR").includes(term) || item.code.toLowerCase().includes(term))
-      && (status === "all" || item.status === status) && (type === "all" || item.personType === type) && (risk === "all" || item.riskGrade === risk);
-  }), [state.investors, search, status, type, risk]);
-  const active = state.investors.filter((item) => item.status === "ATIVO").length;
-  const signed = state.investors.filter((item) => item.contractSigned).length;
-  const totalCapital = sumCents(state.contributions.filter((item) => item.status !== "CANCELADO").map((item) => item.originalAmount));
-  const available = sumCents(state.contributions.filter((item) => item.status !== "CANCELADO").map((item) => item.availableBalance));
-  const save = (input: InvestorInput) => {
-    if (editing) fundingRepository.updateInvestor(editing.id, input); else fundingRepository.createInvestor(input);
-    setFeedback({ tone: "success", message: editing ? "Investidor atualizado e persistido localmente." : "Investidor criado e persistido localmente." });
-    setFormOpen(false); setEditing(undefined);
+  const investors = useMemo(() => state.status === "success" ? state.data.investors : [], [state]);
+  const contributions = state.status === "success" ? state.data.contributions : [];
+  const filtered = useMemo(() => investors.filter((item) => {
+    const term = search.trim().toLocaleLowerCase("pt-BR");
+    return (!term || item.name.toLocaleLowerCase("pt-BR").includes(term) || item.code.toLowerCase().includes(term)) && (status === "all" || item.status === status);
+  }), [investors, search, status]);
+  const total = contributions.reduce((sum, item) => sum + BigInt(item.original_amount.replace(".", "")), 0n);
+  const save = async (input: FundingInvestorInput) => {
+    setSaving(true);
+    try {
+      if (editing) await fundingApi.updateInvestor(editing.id, input); else await fundingApi.createInvestor(input);
+      setFeedback({ tone: "success", message: editing ? "Investidor atualizado." : "Investidor cadastrado." });
+      setFormOpen(false); setEditing(undefined); reload();
+    } catch (error) { setFeedback({ tone: "error", message: error instanceof Error ? error.message : "Falha ao salvar investidor." }); }
+    finally { setSaving(false); }
   };
   return <div className="space-y-6">
-    <PageHeader eyebrow="Cadastro" title="Investidores" description="Situação cadastral, contratos, risco e posição consolidada dos investidores fictícios." actions={<Button onClick={() => { setEditing(undefined); setFormOpen(true); }}><Plus className="size-4" />Novo investidor</Button>} />
+    <PageHeader eyebrow="Cadastro" title="Investidores" description="Investidores reais cadastrados no módulo de Funding." actions={<Button onClick={() => { setEditing(undefined); setFormOpen(true); }}><Plus className="size-4" />Novo investidor</Button>} />
     <FeedbackBanner feedback={feedback} onClose={() => setFeedback(null)} />
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><KpiCard compact icon={Users} label="Investidores ativos" value={String(active)} helper={`${state.investors.length} cadastros no total`} /><KpiCard compact icon={ShieldCheck} label="Contratos assinados" value={String(signed)} /><KpiCard compact icon={WalletCards} label="Capital principal" value={formatCentsAmount(totalCapital)} /><KpiCard compact icon={WalletCards} label="Saldo disponível" value={formatCentsAmount(available)} /></div>
-    <Card className="bg-card/75"><CardContent className="grid gap-3 p-4 lg:grid-cols-[1fr_180px_180px_180px]"><label className="relative"><Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><span className="sr-only">Buscar investidor</span><Input className="pl-9" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar nome ou código…" /></label><Select value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">Todos os status</option><option value="ATIVO">Ativos</option><option value="PENDENTE">Pendentes</option><option value="INATIVO">Inativos</option><option value="ENCERRADO">Encerrados</option></Select><Select value={type} onChange={(event) => setType(event.target.value)}><option value="all">PF e PJ</option><option value="PF">Pessoa física</option><option value="PJ">Pessoa jurídica</option></Select><Select value={risk} onChange={(event) => setRisk(event.target.value)}><option value="all">Todos os riscos</option><option value="BAIXO">Baixo</option><option value="MEDIO">Médio</option><option value="ALTO">Alto</option></Select></CardContent></Card>
-    {filtered.length === 0 ? <EmptyState /> : <Card className="overflow-hidden bg-card/75"><Table><TableHeader><TableRow><TableHead>Investidor</TableHead><TableHead>Situação</TableHead><TableHead>Tipo / risco</TableHead><TableHead>Contrato</TableHead><TableHead>Dia de pagamento</TableHead><TableHead>Aportes</TableHead><TableHead>Capital</TableHead><TableHead className="text-right">Ações</TableHead></TableRow></TableHeader><TableBody>{filtered.map((investor) => { const contributions = state.contributions.filter((item) => item.investorId === investor.id && item.status !== "CANCELADO"); return <TableRow key={investor.id}><TableCell><div><AppLink to={`/cadastro/investidores/${investor.id}`} onNavigate={navigate} className="font-medium hover:text-primary">{investor.name}</AppLink><p className="text-xs text-muted-foreground">{investor.code} · {investor.maskedDocument}</p></div></TableCell><TableCell><StatusBadge status={investor.status} /></TableCell><TableCell>{investor.personType}<div className="mt-1"><StatusBadge status={investor.riskGrade} /></div></TableCell><TableCell>{investor.contractSigned ? "Assinado" : "Pendente"}<p className="text-xs text-muted-foreground">{formatDate(investor.signedAt)}</p></TableCell><TableCell>Dia {investor.paymentDay}</TableCell><TableCell>{contributions.length}</TableCell><TableCell className="font-medium">{formatCentsAmount(sumCents(contributions.map((item) => item.originalAmount)))}</TableCell><TableCell><div className="flex justify-end gap-1"><Button size="icon" variant="ghost" onClick={() => navigate(`/cadastro/investidores/${investor.id}`)} aria-label={`Ver ${investor.name}`}><Eye className="size-4" /></Button><Button size="icon" variant="ghost" onClick={() => { setEditing(investor); setFormOpen(true); }} aria-label={`Editar ${investor.name}`}><Pencil className="size-4" /></Button></div></TableCell></TableRow>; })}</TableBody></Table></Card>}
-    <InvestorFormModal open={formOpen} investor={editing} onClose={() => { setFormOpen(false); setEditing(undefined); }} onSave={save} />
+    {state.status === "loading" && <LoadingState label="Carregando investidores…" />}
+    {state.status === "error" && <ErrorState message={state.error} onRetry={reload} />}
+    {state.status === "success" && <>
+      <div className="grid gap-4 sm:grid-cols-3"><KpiCard compact icon={Users} label="Investidores ativos" value={String(investors.filter((item) => item.status === "ACTIVE").length)} helper={`${investors.length} cadastros no total`} /><KpiCard compact icon={WalletCards} label="Aportes cadastrados" value={String(contributions.length)} /><KpiCard compact icon={WalletCards} label="Capital original" value={formatMoney(`${total / 100n}.${(total % 100n).toString().padStart(2, "0")}`)} /></div>
+      <Card className="bg-card/75"><CardContent className="grid gap-3 p-4 md:grid-cols-[1fr_200px]"><label className="relative"><Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><span className="sr-only">Buscar investidor</span><Input className="pl-9" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar nome ou código…" /></label><Select value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">Todos os status</option><option value="ACTIVE">Ativos</option><option value="INACTIVE">Inativos</option></Select></CardContent></Card>
+      {investors.length === 0 ? <EmptyState title="Nenhum investidor cadastrado." description="Cadastre o primeiro investidor pela API real." /> : filtered.length === 0 ? <EmptyState title="Nenhum investidor encontrado." description="Ajuste os filtros da consulta." /> : <Card className="overflow-hidden bg-card/75"><Table><TableHeader><TableRow><TableHead>Código</TableHead><TableHead>Nome</TableHead><TableHead>Status</TableHead><TableHead>Aportes</TableHead><TableHead className="text-right">Ações</TableHead></TableRow></TableHeader><TableBody>{filtered.map((item) => <TableRow key={item.id}><TableCell className="font-mono text-xs">{item.code}</TableCell><TableCell className="font-medium">{item.name}</TableCell><TableCell><StatusBadge status={item.status} /></TableCell><TableCell>{contributions.filter((value) => value.investor_id === item.id).length}</TableCell><TableCell><div className="flex justify-end gap-2"><Button size="sm" variant="ghost" onClick={() => { setEditing(item); setFormOpen(true); }}><Pencil className="size-4" /><span className="sr-only">Editar</span></Button><AppLink to={`/cadastro/investidores/${item.id}`} onNavigate={navigate}><Button size="sm" variant="outline"><Eye className="size-4" />Ver</Button></AppLink></div></TableCell></TableRow>)}</TableBody></Table></Card>}
+    </>}
+    <InvestorFormModal open={formOpen} investor={editing} saving={saving} onClose={() => { setFormOpen(false); setEditing(undefined); }} onSave={save} />
   </div>;
 }

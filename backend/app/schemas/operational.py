@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 from typing import Annotated, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, PlainSerializer
 
@@ -40,6 +41,8 @@ class SaleItem(OperationalApiModel):
     id: str
     contract_code: str | None
     client_name: str | None
+    client_name_source: Literal["CLIENT_CANONICAL", "ECON_EMPRESTIMOS"] | None = None
+    client_name_divergent: bool = False
     source_client_code: str | None
     operation_date: date | None
     release_date: date | None
@@ -57,7 +60,16 @@ class SaleItem(OperationalApiModel):
     data_quality_status: Quality
     warning_count: int = 0
     divergence_count: int = 0
-    funding_status: str = "NOT_INFORMED"
+    funding_status: Literal[
+        "NOT_INFORMED",
+        "INCOMPLETE",
+        "COMPLETE",
+        "OVERFUNDED",
+        "BASE_AMOUNT_UNAVAILABLE",
+    ] = "NOT_INFORMED"
+    funding_identified_amount: Money = Decimal("0.00")
+    funding_difference: Money | None = None
+    funding_source_count: int = 0
     bank_validation_status: str = "NOT_RECORDED"
 
 
@@ -86,8 +98,11 @@ class RevenueSummary(OperationalApiModel):
 
 class RevenueItem(OperationalApiModel):
     id: int
+    revenue_identity_id: UUID | None = None
     contract_code: str | None
     client_name: str | None
+    client_name_source: Literal["CLIENT_CANONICAL", "ECON_EMPRESTIMOS"] | None = None
+    client_name_divergent: bool = False
     installment_code: str | None
     due_date: date | None
     payment_date: date | None
@@ -102,6 +117,25 @@ class RevenueItem(OperationalApiModel):
     data_quality_status: Quality
     warning_count: int = 0
     divergence_count: int = 0
+    sale_id: str | None = None
+    funding_status: (
+        Literal[
+            "NOT_INFORMED",
+            "INCOMPLETE",
+            "COMPLETE",
+            "OVERFUNDED",
+            "BASE_AMOUNT_UNAVAILABLE",
+        ]
+        | None
+    ) = None
+    distribution_status: Literal[
+        "PENDING_FUNDING",
+        "READY",
+        "DISTRIBUTED",
+        "DIVERGENT",
+        "REVERSED",
+    ] = "PENDING_FUNDING"
+    primary_source_name: str | None = None
 
 
 class RevenueDetail(RevenueItem):
@@ -109,7 +143,6 @@ class RevenueDetail(RevenueItem):
     source_reference: str | None
     warnings: list[QualityMessage] = Field(default_factory=list)
     divergences: list[QualityMessage] = Field(default_factory=list)
-    funding_status: str = "NOT_INFORMED"
     bank_validation_status: str = "NOT_RECORDED"
 
 
