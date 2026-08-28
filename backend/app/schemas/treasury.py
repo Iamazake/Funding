@@ -21,6 +21,7 @@ TreasuryValidationStatus = Literal[
     "VALIDATED",
     "DIVERGENT",
 ]
+BankCode = Literal["INTER", "BTG", "PICPAY", "NUBANK", "C6", "CASH"]
 
 
 class TreasuryApiModel(BaseModel):
@@ -44,8 +45,13 @@ class TreasuryMovementResponse(TreasuryApiModel):
     inflow: DecimalString | None
     outflow: DecimalString | None
     amount: DecimalString | None
+    sale_id: str | None = None
+    released_amount: DecimalString | None = None
+    continuity_type: Literal["REFINANCING", "RENEGOTIATION", "ROLLOVER"] | None = None
+    continuity_role: Literal["PREDECESSOR", "SUCCESSOR"] | None = None
     origin: str
     source_record_id: str
+    source_batch_id: int | None = None
     detail_path: str
     status: str
     financial_operator: str | None = None
@@ -56,6 +62,7 @@ class TreasuryMovementResponse(TreasuryApiModel):
     observed_date: date | None = None
     difference_amount: DecimalString | None = None
     bank_reference: str | None = None
+    bank_code: BankCode | None = None
     validated_at: datetime | None = None
     validated_by: UUID | None = None
     validation_justification: str | None = None
@@ -97,6 +104,7 @@ class TreasuryValidationCreate(TreasuryApiModel):
     observed_amount: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
     observed_date: date
     bank_reference: str | None = Field(default=None, max_length=255)
+    bank_code: BankCode | None = None
     justification: str | None = Field(default=None, max_length=4000)
 
     @model_validator(mode="after")
@@ -123,6 +131,7 @@ class TreasuryValidationResponse(TreasuryApiModel):
     difference_amount: DecimalString
     status: Literal["VALIDATED", "DIVERGENT"]
     bank_reference: str | None
+    bank_code: BankCode | None = None
     justification: str | None
     validated_at: datetime
     validated_by: UUID | None

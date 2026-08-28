@@ -55,6 +55,7 @@ export function ContributionDetailPage({ id, navigate }: { id: string; navigate:
       <KpiCard compact icon={Percent} label="Utilização" value={formatPercent(summary.utilization_percentage)} helper="Exposto ÷ valor original" />
       <KpiCard compact icon={Percent} label="Taxa contratual" value={formatMonthlyRate(summary.monthly_rate)} />
       <KpiCard compact icon={CalendarDays} label="Data do aporte" value={formatDate(summary.contribution_date)} />
+      <KpiCard compact icon={CalendarDays} label="Vencimento do aporte" value={contribution.end_date ? formatDate(contribution.end_date) : "Não informado"} helper="A data não registra devolução automática" />
     </div>
     <Tabs items={[{ value: "operations", label: "Operações financiadas" }, { value: "movements", label: "Movimentações" }, { value: "returns", label: "Retornos" }]} value={tab} onChange={(value) => setTab(value as DetailTab)} />
     {tab === "operations" && <OperationsSection analysis={analysis} navigate={navigate} />}

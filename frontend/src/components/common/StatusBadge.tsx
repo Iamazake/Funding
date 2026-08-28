@@ -16,6 +16,7 @@ const labels: Record<string, string> = {
   CONFIRMADO: "Confirmado", ESTORNADO: "Estornado", ENTRADA: "Entrada", SAIDA: "Saída", TRANSFERENCIA_INTERNA: "Transferência interna", CONCILIADO: "Conciliado",
   BAIXO: "Baixo", MEDIO: "Médio", ALTO: "Alto",
   ADMIN: "Administrador", ANALYST: "Analista",
+  REFIN: "REFIN", REFIN_CONFIRMED: "Refinanciado", RENEGOTIATION: "RENEGOCIADO", RENEGOTIATION_CONFIRMED: "Renegociado", NOT_RECORDED: "Pendente",
 };
 
 function statusLabel(status: string): string {

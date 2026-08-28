@@ -24,6 +24,7 @@ from app.models.normalized import (
     OperationalLoan,
     OperationalPromotion,
 )
+from app.models.operational import ExcelEconEmprestimosRow
 from app.schemas.contribution_analysis import (
     ContributionAnalysisResponse,
     ContributionAnalysisSummary,
@@ -32,9 +33,9 @@ from app.schemas.contribution_analysis import (
     ContributionReturnAnalysis,
     ContributionReturnTotals,
 )
-from app.schemas.funding import ContributionResponse, InvestorResponse
+from app.schemas.funding import ContributionResponse
 from app.services.funding.ledger import funding_status
-from app.services.funding.repository import FundingNotFoundError
+from app.services.funding.repository import FundingNotFoundError, FundingRepository
 
 ZERO = Decimal("0.00")
 PERCENT_QUANTUM = Decimal("0.0001")
@@ -205,7 +206,7 @@ class ContributionAnalysisRepository:
                     ),
                 }
             ),
-            investor=InvestorResponse.model_validate(investor),
+            investor=FundingRepository._investor_response(investor),
             summary=ContributionAnalysisSummary(
                 contribution_id=contribution.id,
                 contribution_code=contribution.code,
@@ -248,6 +249,7 @@ class ContributionAnalysisRepository:
         ]
         loan_ids = [int(value.split(":", 1)[1]) for value in sale_ids if value.startswith("loan:")]
         identities: dict[str, OperationIdentity] = {}
+        source_names = await self._operational_display_names()
         if canonical_ids:
             rows = (
                 await self._session.execute(
@@ -292,7 +294,11 @@ class ContributionAnalysisRepository:
                     "CONTRACT" if contract is not None else "ORPHAN_LOAN",
                     operation.contract_code,
                     loan.id if contract is None and loan is not None else None,
-                    client.name if client else None,
+                    (
+                        client.name
+                        if client and client.name
+                        else source_names.get(operation.contract_code)
+                    ),
                     operation.operation_date,
                     operation.released_amount,
                 )
@@ -312,7 +318,11 @@ class ContributionAnalysisRepository:
                     "CONTRACT",
                     operation.contract_code,
                     None,
-                    client.name if client else None,
+                    (
+                        client.name
+                        if client and client.name
+                        else source_names.get(operation.contract_code)
+                    ),
                     operation.operation_date,
                     operation.released_amount,
                 )
@@ -329,11 +339,44 @@ class ContributionAnalysisRepository:
                     "ORPHAN_LOAN",
                     operation.contract_code,
                     operation.id,
-                    client.name if client else None,
+                    (
+                        client.name
+                        if client and client.name
+                        else source_names.get(operation.contract_code)
+                    ),
                     operation.operation_date,
                     operation.released_amount,
                 )
         return identities
+
+    async def _operational_display_names(self) -> dict[str, str]:
+        rows = (
+            await self._session.execute(
+                select(OperationalLoan.contract_code, ExcelEconEmprestimosRow.nome_cliente)
+                .join(
+                    ExcelEconEmprestimosRow,
+                    ExcelEconEmprestimosRow.id == OperationalLoan.source_loan_row_id,
+                )
+                .join(
+                    OperationalPromotion,
+                    OperationalPromotion.id == OperationalLoan.promotion_id,
+                )
+                .where(
+                    OperationalPromotion.is_current.is_(True),
+                    OperationalPromotion.status == "succeeded",
+                )
+            )
+        ).all()
+        values: dict[str, set[str]] = {}
+        for contract_code, name in rows:
+            normalized = (name or "").strip()
+            if contract_code and normalized:
+                values.setdefault(contract_code, set()).add(normalized)
+        return {
+            contract_code: next(iter(names))
+            for contract_code, names in values.items()
+            if len(names) == 1
+        }
 
     async def _sale_allocation_totals(self, sale_ids: list[str]) -> dict[str, Decimal]:
         if not sale_ids:

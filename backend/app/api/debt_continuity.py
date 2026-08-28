@@ -13,6 +13,8 @@ from app.schemas.debt_continuity import (
     DebtContinuityReject,
     DebtContinuityResponse,
     DebtContinuityReviewCreate,
+    RefinancingCorrection,
+    RefinancingCreate,
 )
 from app.services.operational.debt_continuity import (
     DebtContinuityConflictError,
@@ -52,6 +54,37 @@ async def create_debt_continuity_review(
 ) -> DebtContinuityResponse:
     try:
         return await repository.create_review(data)
+    except DebtContinuityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except DebtContinuityConflictError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@router.post(
+    "/refinancings",
+    response_model=DebtContinuityResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_refinancing(
+    data: RefinancingCreate,
+    repository: Repository,
+) -> DebtContinuityResponse:
+    try:
+        return await repository.create_refinancing(data)
+    except DebtContinuityNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except DebtContinuityConflictError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@router.patch("/{continuity_id}/refinancing", response_model=DebtContinuityResponse)
+async def correct_refinancing(
+    continuity_id: UUID,
+    data: RefinancingCorrection,
+    repository: Repository,
+) -> DebtContinuityResponse:
+    try:
+        return await repository.correct_refinancing(continuity_id, data)
     except DebtContinuityNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except DebtContinuityConflictError as error:

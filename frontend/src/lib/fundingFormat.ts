@@ -1,3 +1,5 @@
+import { formatPercentage } from "@/lib/formatters";
+
 export function formatMonthlyRate(rate: string): string {
   if (!/^\d+(\.\d+)?$/.test(rate)) return rate;
   const [integer, fraction = ""] = rate.split(".");
@@ -7,7 +9,7 @@ export function formatMonthlyRate(rate: string): string {
   const denominator = 10n ** BigInt(scale);
   const whole = scaled / denominator;
   const remainder = (scaled % denominator).toString().padStart(scale, "0").replace(/0+$/, "");
-  return `${whole}${remainder ? `,${remainder}` : ""}% a.m.`;
+  return `${formatPercentage(`${whole}${remainder ? `.${remainder}` : ""}`)} a.m.`;
 }
 
 export function brazilianMoneyToDecimal(value: string): string | null {

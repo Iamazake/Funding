@@ -1,6 +1,7 @@
 export type TreasuryMovementType = "CONTRIBUTION" | "SALE" | "REVENUE" | "CAPITAL_REMUNERATION";
 export type TreasuryDirection = "INFLOW" | "OUTFLOW";
 export type TreasuryValidationStatus = "PENDING" | "VALIDATED" | "DIVERGENT";
+export type TreasuryBankCode = "INTER" | "BTG" | "PICPAY" | "NUBANK" | "C6" | "CASH";
 
 export interface TreasuryMovement {
   id: string;
@@ -19,8 +20,13 @@ export interface TreasuryMovement {
   inflow: string | null;
   outflow: string | null;
   amount: string | null;
+  sale_id?: string | null;
+  released_amount?: string | null;
+  continuity_type?: "REFINANCING" | "RENEGOTIATION" | "ROLLOVER" | null;
+  continuity_role?: "PREDECESSOR" | "SUCCESSOR" | null;
   origin: string;
   source_record_id: string;
+  source_batch_id?: number | null;
   detail_path: string;
   status: string;
   financial_operator: string | null;
@@ -31,6 +37,7 @@ export interface TreasuryMovement {
   observed_date: string | null;
   difference_amount: string | null;
   bank_reference: string | null;
+  bank_code?: TreasuryBankCode | null;
   validated_at: string | null;
   validated_by: string | null;
   validation_justification: string | null;
@@ -84,6 +91,7 @@ export interface TreasuryValidation {
   difference_amount: string;
   status: Exclude<TreasuryValidationStatus, "PENDING">;
   bank_reference: string | null;
+  bank_code: TreasuryBankCode | null;
   justification: string | null;
   validated_at: string;
   validated_by: string | null;
@@ -94,6 +102,7 @@ export interface TreasuryValidationInput {
   observed_amount: string;
   observed_date: string;
   bank_reference: string | null;
+  bank_code?: TreasuryBankCode | null;
   justification: string | null;
 }
 

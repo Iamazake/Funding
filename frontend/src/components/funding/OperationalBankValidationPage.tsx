@@ -173,11 +173,12 @@ function ValidationTable({
   }
   return kind === "SALE" ? (
     <Card className="overflow-hidden bg-card/75">
-      <Table className="min-w-[1060px]">
-        <TableHeader><TableRow><TableHead>Contrato / cliente</TableHead><TableHead>Data</TableHead><TableHead>Valor liberado</TableHead><TableHead>Funding</TableHead><TableHead>Qualidade</TableHead><TableHead>Validação</TableHead><TableHead>Ação</TableHead></TableRow></TableHeader>
+      <Table className="min-w-[1140px]">
+        <TableHeader><TableRow><TableHead>Contrato / cliente</TableHead><TableHead>Tipo</TableHead><TableHead>Data</TableHead><TableHead>Valor liberado</TableHead><TableHead>Funding</TableHead><TableHead>Qualidade</TableHead><TableHead>Validação</TableHead><TableHead>Ação</TableHead></TableRow></TableHeader>
         <TableBody>{items.map((item) => (
           <TableRow key={item.id}>
             <TableCell><AppLink to={item.detail_path} onNavigate={navigate} className="font-semibold text-primary">{item.contract_code ?? item.reference}</AppLink><p className="text-xs text-muted-foreground">{item.client_name ?? "Não informado"}</p></TableCell>
+            <TableCell><OperationTypeBadge item={item} /></TableCell>
             <TableCell>{item.movement_date ? formatDate(item.movement_date) : "Não informado"}</TableCell>
             <TableCell className="font-medium">{item.amount ? formatMoney(item.amount) : "Não informado"}</TableCell>
             <TableCell>{item.funding_status === "NOT_INFORMED" || !item.funding_status ? <span className="text-muted-foreground">Não informado</span> : <StatusBadge status={item.funding_status} />}</TableCell>
@@ -190,11 +191,12 @@ function ValidationTable({
     </Card>
   ) : (
     <Card className="overflow-hidden bg-card/75">
-      <Table className="min-w-[900px]">
-        <TableHeader><TableRow><TableHead>Contrato / cliente</TableHead><TableHead>Parcela</TableHead><TableHead>Pagamento</TableHead><TableHead>Valor recebido</TableHead><TableHead>Diferença</TableHead><TableHead>Validação</TableHead><TableHead>Ação</TableHead></TableRow></TableHeader>
+      <Table className="min-w-[980px]">
+        <TableHeader><TableRow><TableHead>Contrato / cliente</TableHead><TableHead>Tipo</TableHead><TableHead>Parcela</TableHead><TableHead>Pagamento</TableHead><TableHead>Valor recebido</TableHead><TableHead>Diferença</TableHead><TableHead>Validação</TableHead><TableHead>Ação</TableHead></TableRow></TableHeader>
         <TableBody>{items.map((item) => (
           <TableRow key={item.id}>
             <TableCell><AppLink to={item.detail_path} onNavigate={navigate} className="font-semibold text-primary">{item.contract_code ?? item.reference}</AppLink><p className="text-xs text-muted-foreground">{item.client_name ?? "Não informado"}</p></TableCell>
+            <TableCell><OperationTypeBadge item={item} /></TableCell>
             <TableCell>{item.installment_code ?? "Não informado"}</TableCell>
             <TableCell>{item.movement_date ? formatDate(item.movement_date) : "Não informado"}</TableCell>
             <TableCell className="font-medium text-emerald-400">{formatMoney(item.amount ?? "0.00")}</TableCell>
@@ -206,6 +208,15 @@ function ValidationTable({
       </Table>
     </Card>
   );
+}
+
+function OperationTypeBadge({ item }: { item: TreasuryMovement }) {
+  const label = item.continuity_type === "REFINANCING"
+    ? "REFIN"
+    : item.continuity_type === "RENEGOTIATION" || item.continuity_type === "ROLLOVER"
+      ? "RENEG"
+      : "NORMAL";
+  return <StatusBadge status={label} />;
 }
 
 function ValidationAction({ item, onValidate }: { item: TreasuryMovement; onValidate: (movement: TreasuryMovement) => void }) {

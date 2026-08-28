@@ -41,6 +41,7 @@ class SaleItem(OperationalApiModel):
     id: str
     contract_code: str | None
     client_name: str | None
+    client_identity_id: int | None = None
     client_name_source: Literal["CLIENT_CANONICAL", "ECON_EMPRESTIMOS"] | None = None
     client_name_divergent: bool = False
     source_client_code: str | None
@@ -71,6 +72,17 @@ class SaleItem(OperationalApiModel):
     funding_difference: Money | None = None
     funding_source_count: int = 0
     bank_validation_status: str = "NOT_RECORDED"
+    continuity_id: str | None = None
+    continuity_type: Literal["REFINANCING", "RENEGOTIATION", "ROLLOVER"] | None = None
+    continuity_role: Literal["PREDECESSOR", "SUCCESSOR"] | None = None
+    predecessor_sale_id: str | None = None
+    predecessor_contract_code: str | None = None
+    predecessor_sale_ids: list[str] = Field(default_factory=list)
+    predecessor_contract_codes: list[str] = Field(default_factory=list)
+    successor_sale_id: str | None = None
+    successor_contract_code: str | None = None
+    continuity_effective_date: date | None = None
+    continuity_notes: str | None = None
 
 
 class SaleDetail(SaleItem):
@@ -94,6 +106,12 @@ class RevenueSummary(OperationalApiModel):
     pending_records: int
     warning_records: int
     divergent_records: int
+    principal_total: Money = Decimal("0.00")
+    principal_open: Money = Decimal("0.00")
+    average_pmt: Money = Decimal("0.00")
+    overdue_principal: Money = Decimal("0.00")
+    overdue_pmt: Money = Decimal("0.00")
+    delinquency_percentage: Money = Decimal("0.00")
 
 
 class RevenueItem(OperationalApiModel):
@@ -136,6 +154,8 @@ class RevenueItem(OperationalApiModel):
         "REVERSED",
     ] = "PENDING_FUNDING"
     primary_source_name: str | None = None
+    bank_validation_status: str = "NOT_RECORDED"
+    refinanced_to_contract_code: str | None = None
 
 
 class RevenueDetail(RevenueItem):

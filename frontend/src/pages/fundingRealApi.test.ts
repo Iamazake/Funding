@@ -22,7 +22,7 @@ describe("telas reais de investidores e aportes", () => {
     expect(source).toContain("fundingApi.createAllocation");
     expect(source).toContain("fundingApi.reverseAllocation");
     expect(source).toContain("fundingApi.registerRemoCapital");
-    expect(source).toContain('min-w-[1160px]');
+    expect(source).toContain('min-w-[1040px]');
     expect(source).toContain('Parcela (PMT)');
     expect(source).not.toContain('min-w-[1500px]');
   });

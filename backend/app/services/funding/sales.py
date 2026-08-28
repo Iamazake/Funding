@@ -66,18 +66,27 @@ async def resolve_funding_sale(session: AsyncSession, sale_id: str) -> FundingSa
         select(OperationalDebtContinuity).where(
             OperationalDebtContinuity.successor_sale_identity_id == identity_id,
             OperationalDebtContinuity.predecessor_sale_identity_id != identity_id,
-            OperationalDebtContinuity.status == "RENEGOTIATION_CONFIRMED",
-            OperationalDebtContinuity.has_new_disbursement.is_(False),
+            OperationalDebtContinuity.status.in_(
+                ("RENEGOTIATION_CONFIRMED", "REFIN_CONFIRMED")
+            ),
         )
     )
+    is_refinancing = continuity is not None and continuity.status == "REFIN_CONFIRMED"
+    operational_release = entity.released_amount
     return FundingSale(
         sale_id=f"sale:{identity_id}",
         sale_identity_id=identity_id,
         operation_date=entity.operation_date,
         released_amount=(
-            continuity.principal_rolled if continuity is not None else entity.released_amount
+            operational_release
+            if is_refinancing or continuity is None
+            else continuity.principal_rolled
         ),
-        has_new_disbursement=continuity is None,
+        has_new_disbursement=(
+            operational_release is not None and operational_release > Decimal("0.00")
+            if is_refinancing
+            else continuity is None
+        ),
         funding_origin_sale_identity_id=(
             continuity.predecessor_sale_identity_id if continuity is not None else None
         ),

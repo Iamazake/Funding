@@ -60,6 +60,11 @@ class TreasuryBankValidation(Base):
             name="ck_treasury_bank_validations_divergent_justification",
         ),
         CheckConstraint("version > 0", name="ck_treasury_bank_validations_version"),
+        CheckConstraint(
+            "bank_code IS NULL OR bank_code IN "
+            "('INTER', 'BTG', 'PICPAY', 'NUBANK', 'C6', 'CASH')",
+            name="ck_treasury_bank_validations_bank_code",
+        ),
         UniqueConstraint(
             "movement_key",
             "version",
@@ -110,6 +115,7 @@ class TreasuryBankValidation(Base):
     difference_amount: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     bank_reference: Mapped[str | None] = mapped_column(String(255))
+    bank_code: Mapped[str | None] = mapped_column(String(16), index=True)
     justification: Mapped[str | None] = mapped_column(Text)
     validated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now, server_default=func.now()

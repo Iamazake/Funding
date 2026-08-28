@@ -1,5 +1,6 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -28,3 +29,46 @@ SessionFactory = async_sessionmaker(
 async def get_session() -> AsyncIterator[AsyncSession]:
     async with SessionFactory() as session:
         yield session
+
+
+async def execute_read_only_with_retry[ReadResult](
+    session: AsyncSession,
+    operation: Callable[[], Awaitable[ReadResult]],
+) -> ReadResult:
+    """Retry one idempotent read once after an explicit transient disconnect.
+
+    Callers must opt in per read operation. Write repositories never pass through
+    this helper, so allocation, ledger, distribution and operational decisions are
+    not replayed automatically.
+    """
+
+    try:
+        return await operation()
+    except Exception as error:
+        if not is_transient_disconnect(error):
+            raise
+        await session.invalidate()
+        return await operation()
+
+
+def is_transient_disconnect(error: BaseException) -> bool:
+    if isinstance(error, DBAPIError) and error.connection_invalidated:
+        return True
+
+    current: BaseException | None = error
+    visited: set[int] = set()
+    transient_names = {"ConnectionDoesNotExistError"}
+    transient_messages = (
+        "connection was closed in the middle of operation",
+        "decryption_failed_or_bad_record_mac",
+        "connection is closed",
+    )
+    while current is not None and id(current) not in visited:
+        visited.add(id(current))
+        if type(current).__name__ in transient_names:
+            return True
+        message = str(current).casefold()
+        if any(marker in message for marker in transient_messages):
+            return True
+        current = current.__cause__ or current.__context__
+    return False

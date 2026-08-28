@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { decimalToCents, formatOperationalMoney } from "@/lib/operationalFormat";
+import {
+  decimalToCents,
+  formatOperationalMoney,
+  formatOperationalRate,
+} from "@/lib/operationalFormat";
 import {
   collectionView,
   getRevenue,
@@ -59,10 +63,13 @@ describe("provider operacional real", () => {
       summary: { total_records: 2 },
     }));
     vi.stubGlobal("fetch", fetchMock);
-    const result = await getRevenue({ contract: "CTR-1", payment_from: "2026-01-01" });
+    const result = await getRevenue({ contract: "CTR-1", client: "Maria", payment_from: "2026-01-01", view: "overdue", sort_by: "operational_relevance", sort_order: "asc" });
     const url = String(fetchMock.mock.calls[0][0]);
     expect(url).toContain("contract=CTR-1");
     expect(url).toContain("payment_from=2026-01-01");
+    expect(url).toContain("client=Maria");
+    expect(url).toContain("view=overdue");
+    expect(url).toContain("sort_by=operational_relevance");
     expect(result.items).toHaveLength(2);
     expect(new Set(result.items.map((item) => item.id)).size).toBe(2);
   });
@@ -100,5 +107,14 @@ describe("estados e dinheiro operacional", () => {
     expect(decimalToCents("1234.56")).toBe("123456");
     expect(decimalToCents("-0.05")).toBe("-5");
     expect(formatOperationalMoney("1234.56")).toContain("1.234,56");
+  });
+
+  it("apresenta taxa fracionária sem alterar o valor e com até quatro casas", () => {
+    const persisted = "0.1234567890";
+    expect(formatOperationalRate("0.12", true)).toBe("12% a.m.");
+    expect(formatOperationalRate("0.125", true)).toBe("12,5% a.m.");
+    expect(formatOperationalRate("0.1225")).toBe("12,25%");
+    expect(formatOperationalRate(persisted)).toBe("12,3457%");
+    expect(persisted).toBe("0.1234567890");
   });
 });

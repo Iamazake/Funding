@@ -532,8 +532,9 @@ class RevenueDistributionRepository:
                     == sale_snapshot.sale_identity_id,
                     OperationalDebtContinuity.predecessor_sale_identity_id
                     != sale_snapshot.sale_identity_id,
-                    OperationalDebtContinuity.status == "RENEGOTIATION_CONFIRMED",
-                    OperationalDebtContinuity.has_new_disbursement.is_(False),
+                    OperationalDebtContinuity.status.in_(
+                        ("RENEGOTIATION_CONFIRMED", "REFIN_CONFIRMED")
+                    ),
                 )
             )
         return RevenueContext(
@@ -542,7 +543,12 @@ class RevenueDistributionRepository:
             sale_identity_id=(sale_snapshot.sale_identity_id if sale_snapshot else None),
             sale_id=(f"sale:{sale_snapshot.sale_identity_id}" if sale_snapshot else None),
             base_amount=(
-                continuity.principal_rolled
+                (
+                    (continuity.principal_rolled or ZERO)
+                    + (contract.released_amount or ZERO)
+                    if continuity.status == "REFIN_CONFIRMED"
+                    else continuity.principal_rolled
+                )
                 if continuity is not None
                 else contract.released_amount if contract is not None else None
             ),
@@ -568,12 +574,10 @@ class RevenueDistributionRepository:
                 .order_by(FundingAllocation.id)
             )
         ).all()
-        if direct:
-            return [(*row, None) for row in direct]
         try:
             sale_identity_id = UUID(sale_id.split(":", 1)[1])
         except (IndexError, ValueError):
-            return []
+            return [(*row, None) for row in direct]
         inherited = (
             await self._session.execute(
                 select(
@@ -604,10 +608,11 @@ class RevenueDistributionRepository:
                 .order_by(OperationalDebtFundingContinuity.origin_allocation_id)
             )
         ).all()
-        return [
+        inherited_rows = [
             (allocation, source, contribution, investor, continuity.rolled_amount)
             for continuity, allocation, source, contribution, investor in inherited
         ]
+        return [(*row, None) for row in direct] + inherited_rows
 
     async def _active_distribution(
         self, revenue_id: UUID
@@ -1014,7 +1019,6 @@ async def revenue_funding_summaries(
     allocations_by_sale: dict[str, list[tuple]] = {}
     for row in allocation_rows:
         allocations_by_sale.setdefault(row[0].sale_id, []).append((*row, None))
-    direct_sale_keys = set(allocations_by_sale)
     canonical_sale_ids: list[UUID] = []
     for sale_id in sale_ids:
         if not sale_id.startswith("sale:"):
@@ -1055,16 +1059,15 @@ async def revenue_funding_summaries(
     ).all() if canonical_sale_ids else []
     for continuity, allocation, source, contribution, investor in inherited_rows:
         key = f"sale:{continuity.successor_sale_identity_id}"
-        if key not in direct_sale_keys:
-            allocations_by_sale.setdefault(key, []).append(
-                (
-                    allocation,
-                    source,
-                    contribution,
-                    investor,
-                    continuity.rolled_amount,
-                )
+        allocations_by_sale.setdefault(key, []).append(
+            (
+                allocation,
+                source,
+                contribution,
+                investor,
+                continuity.rolled_amount,
             )
+        )
 
     summaries: dict[int, RevenueFundingSummary] = {}
     for item in inputs:

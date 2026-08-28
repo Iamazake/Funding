@@ -49,13 +49,13 @@ class FundingRepository:
         rows = await self._session.scalars(
             select(FundingInvestor).order_by(FundingInvestor.name, FundingInvestor.id)
         )
-        return [InvestorResponse.model_validate(row) for row in rows]
+        return [self._investor_response(row) for row in rows]
 
     async def get_investor(self, investor_id: UUID) -> InvestorResponse:
         row = await self._session.get(FundingInvestor, investor_id)
         if row is None:
             raise FundingNotFoundError("Investidor não encontrado.")
-        return InvestorResponse.model_validate(row)
+        return self._investor_response(row)
 
     async def create_investor(self, data: InvestorCreate) -> InvestorResponse:
         entity_id = uuid4()
@@ -67,7 +67,7 @@ class FundingRepository:
         self._session.add(row)
         self._audit("INVESTOR", entity_id, "CREATED", data.model_dump(mode="json"))
         await self._commit_and_refresh(row)
-        return InvestorResponse.model_validate(row)
+        return self._investor_response(row)
 
     async def update_investor(self, investor_id: UUID, data: InvestorUpdate) -> InvestorResponse:
         row = await self._locked(FundingInvestor, investor_id, "Investidor não encontrado.")
@@ -75,7 +75,7 @@ class FundingRepository:
         row.updated_at = utc_now()
         self._audit("INVESTOR", investor_id, "UPDATED", changes)
         await self._commit_and_refresh(row)
-        return InvestorResponse.model_validate(row)
+        return self._investor_response(row)
 
     async def list_contributions(
         self, investor_id: UUID | None = None
@@ -160,6 +160,10 @@ class FundingRepository:
             raise FundingConflictError(
                 "O valor original não pode ser sobrescrito após movimentação financeira."
             )
+        contribution_date = values.get("contribution_date", row.contribution_date)
+        end_date = values.get("end_date", row.end_date)
+        if end_date is not None and end_date < contribution_date:
+            raise FundingConflictError("Data fim não pode ser anterior à data do aporte.")
         changes = self._apply(row, values)
         row.updated_at = utc_now()
         self._audit("CONTRIBUTION", contribution_id, "UPDATED", changes)
@@ -236,4 +240,17 @@ class FundingRepository:
                 **row.__dict__,
                 "original_amount_editable": row.original_amount_locked_at is None,
             }
+        )
+
+    @staticmethod
+    def _investor_response(row: FundingInvestor) -> InvestorResponse:
+        digits = "".join(character for character in (row.tax_id or "") if character.isdigit())
+        if len(digits) == 11:
+            masked = f"{digits[:3]}.***.***-{digits[-2:]}"
+        elif len(digits) == 14:
+            masked = f"{digits[:2]}.***.***/****-{digits[-2:]}"
+        else:
+            masked = "Documento cadastrado" if row.tax_id else None
+        return InvestorResponse.model_validate(
+            {**row.__dict__, "tax_id_masked": masked}
         )

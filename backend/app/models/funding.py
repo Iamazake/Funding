@@ -43,6 +43,8 @@ class FundingInvestor(Base):
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     code: Mapped[str] = mapped_column(String(24), nullable=False)
     name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    tax_id: Mapped[str | None] = mapped_column(String(20), index=True)
+    phone: Mapped[str | None] = mapped_column(String(32))
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, default="ACTIVE", server_default="ACTIVE", index=True
     )
@@ -88,6 +90,7 @@ class FundingContribution(Base):
         index=True,
     )
     contribution_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    end_date: Mapped[date | None] = mapped_column(Date, index=True)
     original_amount: Mapped[Decimal] = mapped_column(MONEY, nullable=False)
     monthly_rate: Mapped[Decimal] = mapped_column(MONTHLY_RATE, nullable=False)
     status: Mapped[str] = mapped_column(

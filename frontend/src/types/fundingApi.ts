@@ -5,6 +5,8 @@ export interface FundingInvestor {
   id: string;
   code: string;
   name: string;
+  tax_id_masked: string | null;
+  phone: string | null;
   status: InvestorStatus;
   notes: string | null;
   created_at: string;
@@ -16,6 +18,7 @@ export interface FundingContribution {
   code: string;
   investor_id: string;
   contribution_date: string;
+  end_date?: string | null;
   original_amount: string;
   monthly_rate: string;
   status: ContributionStatus;
@@ -27,6 +30,8 @@ export interface FundingContribution {
 
 export interface FundingInvestorInput {
   name: string;
+  tax_id?: string | null;
+  phone: string | null;
   status: InvestorStatus;
   notes: string | null;
 }
@@ -34,6 +39,7 @@ export interface FundingInvestorInput {
 export interface FundingContributionInput {
   investor_id: string;
   contribution_date: string;
+  end_date?: string | null;
   original_amount: string;
   monthly_rate: string;
   status: ContributionStatus;

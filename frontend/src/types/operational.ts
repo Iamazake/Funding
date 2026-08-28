@@ -17,6 +17,7 @@ export interface SaleItem {
   id: string;
   contract_code: string | null;
   client_name: string | null;
+  client_identity_id?: number | null;
   client_name_source?: "CLIENT_CANONICAL" | "ECON_EMPRESTIMOS" | null;
   client_name_divergent?: boolean;
   source_client_code: string | null;
@@ -41,6 +42,17 @@ export interface SaleItem {
   funding_difference: string | null;
   funding_source_count: number;
   bank_validation_status: "NOT_RECORDED" | "VALIDATED" | "DIVERGENT";
+  continuity_id: string | null;
+  continuity_type: "REFINANCING" | "RENEGOTIATION" | "ROLLOVER" | null;
+  continuity_role: "PREDECESSOR" | "SUCCESSOR" | null;
+  predecessor_sale_id: string | null;
+  predecessor_contract_code: string | null;
+  predecessor_sale_ids?: string[];
+  predecessor_contract_codes?: string[];
+  successor_sale_id: string | null;
+  successor_contract_code: string | null;
+  continuity_effective_date: string | null;
+  continuity_notes: string | null;
 }
 
 export interface SaleDetail extends SaleItem {
@@ -86,6 +98,8 @@ export interface RevenueItem {
   funding_status: SaleItem["funding_status"] | null;
   distribution_status: "PENDING_FUNDING" | "READY" | "DISTRIBUTED" | "DIVERGENT" | "REVERSED";
   primary_source_name: string | null;
+  bank_validation_status: "NOT_RECORDED" | "VALIDATED" | "DIVERGENT";
+  refinanced_to_contract_code: string | null;
 }
 
 export interface RevenueDetail extends RevenueItem {
@@ -109,6 +123,12 @@ export interface RevenueResponse {
     pending_records: number;
     warning_records: number;
     divergent_records: number;
+    principal_total: string;
+    principal_open: string;
+    average_pmt: string;
+    overdue_principal: string;
+    overdue_pmt: string;
+    delinquency_percentage: string;
   };
 }
 
@@ -138,6 +158,7 @@ export interface RevenueFilters {
   payment_from?: string;
   payment_to?: string;
   quality?: DataQuality | "";
+  view?: "all" | "received" | "open" | "overdue" | "future";
   sort_by?: string;
   sort_order?: "asc" | "desc";
 }

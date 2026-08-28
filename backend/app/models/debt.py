@@ -17,6 +17,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -29,7 +30,7 @@ class OperationalDebtContinuity(Base):
     __tablename__ = "operational_debt_continuities"
     __table_args__ = (
         CheckConstraint(
-            "continuity_type IN ('RENEGOTIATION', 'ROLLOVER')",
+            "continuity_type IN ('RENEGOTIATION', 'ROLLOVER', 'REFINANCING')",
             name="ck_operational_debt_continuities_type",
         ),
         CheckConstraint(
@@ -37,7 +38,8 @@ class OperationalDebtContinuity(Base):
             name="ck_operational_debt_continuities_scope",
         ),
         CheckConstraint(
-            "status IN ('REVIEW_REQUIRED', 'RENEGOTIATION_CONFIRMED', 'REJECTED')",
+            "status IN ('REVIEW_REQUIRED', 'RENEGOTIATION_CONFIRMED', "
+            "'REFIN_CONFIRMED', 'REJECTED')",
             name="ck_operational_debt_continuities_status",
         ),
         CheckConstraint(
@@ -62,7 +64,7 @@ class OperationalDebtContinuity(Base):
             name="ck_operational_debt_continuities_principal_equation",
         ),
         CheckConstraint(
-            "status <> 'RENEGOTIATION_CONFIRMED' OR "
+            "status NOT IN ('RENEGOTIATION_CONFIRMED', 'REFIN_CONFIRMED') OR "
             "(predecessor_sale_identity_id IS NOT NULL AND has_new_disbursement IS NOT NULL "
             "AND confirmed_by IS NOT NULL AND confirmed_at IS NOT NULL)",
             name="ck_operational_debt_continuities_confirmation",
@@ -132,6 +134,57 @@ class OperationalDebtContinuity(Base):
     )
 
 
+class OperationalDebtContinuityPredecessor(Base):
+    """Append-only membership history for the canonical N -> 1 relationship."""
+
+    __tablename__ = "operational_debt_continuity_predecessors"
+    __table_args__ = (
+        CheckConstraint(
+            "(is_current AND removed_at IS NULL AND removed_by IS NULL) OR "
+            "(NOT is_current AND removed_at IS NOT NULL AND removed_by IS NOT NULL)",
+            name="ck_operational_debt_continuity_predecessors_lifecycle",
+        ),
+        Index(
+            "uq_operational_debt_continuity_predecessors_current",
+            "continuity_id",
+            "sale_identity_id",
+            unique=True,
+            postgresql_where=text("is_current"),
+        ),
+        Index(
+            "ix_operational_debt_continuity_predecessors_sale_current",
+            "sale_identity_id",
+            "is_current",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    continuity_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("operational_debt_continuities.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    sale_identity_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("operational_sale_identities.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    is_current: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+    added_by: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("app_users.id", ondelete="RESTRICT"), nullable=False
+    )
+    removed_by: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("app_users.id", ondelete="RESTRICT")
+    )
+    added_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, server_default=func.now()
+    )
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class OperationalDebtFundingContinuity(Base):
     __tablename__ = "operational_debt_funding_continuities"
     __table_args__ = (
@@ -183,7 +236,9 @@ class OperationalDebtContinuityAuditEvent(Base):
     __tablename__ = "operational_debt_continuity_audit_events"
     __table_args__ = (
         CheckConstraint(
-            "action IN ('REVIEW_CREATED', 'RENEGOTIATION_CONFIRMED', 'REJECTED')",
+            "action IN ('REVIEW_CREATED', 'RENEGOTIATION_CONFIRMED', "
+            "'REFIN_CONFIRMED', 'REFIN_CORRECTED', 'PREDECESSORS_CORRECTED', "
+            "'REJECTED')",
             name="ck_operational_debt_continuity_audit_action",
         ),
         Index(
@@ -205,5 +260,42 @@ class OperationalDebtContinuityAuditEvent(Base):
     )
     details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, server_default=func.now()
+    )
+
+
+class OperationalDebtRefinancedInstallment(Base):
+    """Append-only classification of unpaid debt closed by a confirmed refinancing."""
+
+    __tablename__ = "operational_debt_refinanced_installments"
+    __table_args__ = (
+        UniqueConstraint(
+            "continuity_id",
+            "revenue_identity_id",
+            name="uq_operational_debt_refinanced_installments_continuity_revenue",
+        ),
+        Index(
+            "ix_operational_debt_refinanced_installments_revenue",
+            "revenue_identity_id",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    continuity_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("operational_debt_continuities.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    revenue_identity_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("operational_revenue_identities.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    original_status: Mapped[str | None] = mapped_column(String(100))
+    classified_by: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("app_users.id", ondelete="RESTRICT"), nullable=False
+    )
+    classified_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now, server_default=func.now()
     )

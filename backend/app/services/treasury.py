@@ -6,6 +6,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    BigInteger,
     String,
     Uuid,
     and_,
@@ -15,12 +16,16 @@ from sqlalchemy import (
     func,
     literal,
     null,
+    or_,
     select,
     union_all,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.debt import OperationalDebtContinuity
+from app.models.debt import (
+    OperationalDebtContinuity,
+    OperationalDebtContinuityPredecessor,
+)
 from app.models.funding import FundingAllocation, FundingContribution, FundingInvestor
 from app.models.identity import OperationalRevenueSnapshot, OperationalSaleSnapshot
 from app.models.normalized import (
@@ -108,30 +113,22 @@ class TreasuryRepository:
                         ),
                         ZERO,
                     ).label("sales"),
-                    func.count().filter(statement.c.movement_type == "CONTRIBUTION").label(
-                        "contribution_count"
-                    ),
-                    func.count().filter(statement.c.movement_type == "REVENUE").label(
-                        "revenue_count"
-                    ),
-                    func.count().filter(statement.c.movement_type == "SALE").label(
-                        "sale_count"
-                    ),
-                    func.count().filter(statement.c.movement_date.is_(None)).label(
-                        "undated_count"
-                    ),
-                    func.count().filter(statement.c.amount.is_(None)).label(
-                        "unknown_amount_count"
-                    ),
-                    func.count().filter(statement.c.validation_id.is_(None)).label(
-                        "pending_count"
-                    ),
-                    func.count().filter(statement.c.validation_status == "VALIDATED").label(
-                        "validated_count"
-                    ),
-                    func.count().filter(statement.c.validation_status == "DIVERGENT").label(
-                        "divergent_count"
-                    ),
+                    func.count()
+                    .filter(statement.c.movement_type == "CONTRIBUTION")
+                    .label("contribution_count"),
+                    func.count()
+                    .filter(statement.c.movement_type == "REVENUE")
+                    .label("revenue_count"),
+                    func.count().filter(statement.c.movement_type == "SALE").label("sale_count"),
+                    func.count().filter(statement.c.movement_date.is_(None)).label("undated_count"),
+                    func.count().filter(statement.c.amount.is_(None)).label("unknown_amount_count"),
+                    func.count().filter(statement.c.validation_id.is_(None)).label("pending_count"),
+                    func.count()
+                    .filter(statement.c.validation_status == "VALIDATED")
+                    .label("validated_count"),
+                    func.count()
+                    .filter(statement.c.validation_status == "DIVERGENT")
+                    .label("divergent_count"),
                     func.coalesce(func.sum(statement.c.difference_amount), ZERO).label(
                         "net_difference"
                     ),
@@ -165,8 +162,7 @@ class TreasuryRepository:
     async def movements(self, query: TreasuryQuery) -> TreasuryMovementsResponse:
         statement = self._filtered_movement_statement(query)
         total = int(
-            await self._session.scalar(select(func.count()).select_from(statement.subquery()))
-            or 0
+            await self._session.scalar(select(func.count()).select_from(statement.subquery())) or 0
         )
         rows = (
             await self._session.execute(
@@ -235,11 +231,7 @@ class TreasuryRepository:
                     "Movimento sem valor positivo não pode ser validado no banco."
                 )
             await self._session.execute(
-                select(
-                    func.pg_advisory_xact_lock(
-                        func.hashtextextended(movement_key, literal(0))
-                    )
-                )
+                select(func.pg_advisory_xact_lock(func.hashtextextended(movement_key, literal(0))))
             )
             current = await self._session.scalar(
                 select(TreasuryBankValidation)
@@ -281,6 +273,7 @@ class TreasuryRepository:
                 difference_amount=difference,
                 status=status,
                 bank_reference=data.bank_reference,
+                bank_code=data.bank_code,
                 justification=data.justification,
                 validated_at=utc_now(),
                 validated_by=self._actor_user_id,
@@ -300,9 +293,7 @@ class TreasuryRepository:
         except TreasuryNotFoundError:
             raise
 
-    async def _current_validation(
-        self, movement_key: str
-    ) -> TreasuryBankValidation | None:
+    async def _current_validation(self, movement_key: str) -> TreasuryBankValidation | None:
         return await self._session.scalar(
             select(TreasuryBankValidation).where(
                 TreasuryBankValidation.movement_key == movement_key,
@@ -369,6 +360,7 @@ class TreasuryRepository:
             validation.observed_date,
             validation.difference_amount,
             validation.bank_reference,
+            validation.bank_code,
             validation.validated_at,
             validation.validated_by,
             validation.justification.label("validation_justification"),
@@ -432,6 +424,59 @@ class TreasuryRepository:
         zero = literal(ZERO, type_=MONEY)
         null_uuid = cast(null(), Uuid(as_uuid=True))
         null_text = cast(null(), String)
+        null_bigint = cast(null(), BigInteger)
+        null_money = cast(null(), MONEY)
+
+        def continuity_state(sale_identity_id):
+            confirmed_statuses = ("REFIN_CONFIRMED", "RENEGOTIATION_CONFIRMED")
+            is_predecessor = exists(
+                select(OperationalDebtContinuityPredecessor.id).where(
+                    OperationalDebtContinuityPredecessor.continuity_id
+                    == OperationalDebtContinuity.id,
+                    OperationalDebtContinuityPredecessor.sale_identity_id
+                    == sale_identity_id,
+                    OperationalDebtContinuityPredecessor.is_current.is_(True),
+                )
+            )
+            continuity_filter = (
+                or_(
+                    OperationalDebtContinuity.successor_sale_identity_id == sale_identity_id,
+                    is_predecessor,
+                ),
+                OperationalDebtContinuity.status.in_(confirmed_statuses),
+            )
+            latest_type = (
+                select(OperationalDebtContinuity.continuity_type)
+                .where(*continuity_filter)
+                .order_by(
+                    OperationalDebtContinuity.updated_at.desc(),
+                    OperationalDebtContinuity.id.desc(),
+                )
+                .limit(1)
+                .correlate_except(OperationalDebtContinuity)
+                .scalar_subquery()
+            )
+            latest_role = (
+                select(
+                    case(
+                        (
+                            OperationalDebtContinuity.successor_sale_identity_id
+                            == sale_identity_id,
+                            "SUCCESSOR",
+                        ),
+                        else_="PREDECESSOR",
+                    )
+                )
+                .where(*continuity_filter)
+                .order_by(
+                    OperationalDebtContinuity.updated_at.desc(),
+                    OperationalDebtContinuity.id.desc(),
+                )
+                .limit(1)
+                .correlate_except(OperationalDebtContinuity)
+                .scalar_subquery()
+            )
+            return latest_type, latest_role
 
         allocation_totals = (
             select(
@@ -461,9 +506,7 @@ class TreasuryRepository:
                 literal("INFLOW").label("direction"),
                 FundingContribution.contribution_date.label("movement_date"),
                 FundingContribution.code.label("reference"),
-                func.concat("Aporte recebido de ", FundingInvestor.name).label(
-                    "description"
-                ),
+                func.concat("Aporte recebido de ", FundingInvestor.name).label("description"),
                 null_text.label("contract_code"),
                 null_text.label("client_name"),
                 null_text.label("installment_code"),
@@ -474,8 +517,13 @@ class TreasuryRepository:
                 FundingContribution.original_amount.label("inflow"),
                 zero.label("outflow"),
                 FundingContribution.original_amount.label("amount"),
+                null_text.label("sale_id"),
+                null_money.label("released_amount"),
+                null_text.label("continuity_type"),
+                null_text.label("continuity_role"),
                 literal("funding_contributions").label("origin"),
                 contribution_id.label("source_record_id"),
+                null_bigint.label("source_batch_id"),
                 (literal("/cadastro/aportes/") + contribution_id).label("detail_path"),
                 FundingContribution.status.label("source_status"),
             )
@@ -483,8 +531,9 @@ class TreasuryRepository:
             .join(FundingInvestor, FundingInvestor.id == FundingContribution.investor_id)
         )
 
-        contract_sale_id = literal("sale:") + cast(
-            OperationalSaleSnapshot.sale_identity_id, String
+        contract_sale_id = literal("sale:") + cast(OperationalSaleSnapshot.sale_identity_id, String)
+        contract_continuity_type, contract_continuity_role = continuity_state(
+            OperationalSaleSnapshot.sale_identity_id
         )
         contract_is_rollover = exists(
             select(OperationalDebtContinuity.id).where(
@@ -518,16 +567,19 @@ class TreasuryRepository:
                 OperationalClient.name.label("client_name"),
                 null_text.label("installment_code"),
                 OperationalContract.data_quality_status.label("data_quality_status"),
-                funding_status_for(OperationalContract.released_amount).label(
-                    "funding_status"
-                ),
+                funding_status_for(OperationalContract.released_amount).label("funding_status"),
                 null_uuid.label("investor_id"),
                 null_text.label("investor_name"),
                 zero.label("inflow"),
                 OperationalContract.released_amount.label("outflow"),
                 OperationalContract.released_amount.label("amount"),
+                contract_sale_id.label("sale_id"),
+                OperationalContract.released_amount.label("released_amount"),
+                contract_continuity_type.label("continuity_type"),
+                contract_continuity_role.label("continuity_role"),
                 literal("operational_contracts").label("origin"),
                 contract_sale_id.label("source_record_id"),
+                OperationalContract.current_source_batch_id.label("source_batch_id"),
                 (literal("/vendas/") + contract_sale_id).label("detail_path"),
                 func.coalesce(
                     OperationalContract.operational_status,
@@ -553,8 +605,9 @@ class TreasuryRepository:
             )
         )
 
-        loan_sale_id = literal("sale:") + cast(
-            OperationalSaleSnapshot.sale_identity_id, String
+        loan_sale_id = literal("sale:") + cast(OperationalSaleSnapshot.sale_identity_id, String)
+        loan_continuity_type, loan_continuity_role = continuity_state(
+            OperationalSaleSnapshot.sale_identity_id
         )
         loan_is_rollover = exists(
             select(OperationalDebtContinuity.id).where(
@@ -594,8 +647,13 @@ class TreasuryRepository:
                 zero.label("inflow"),
                 OperationalLoan.released_amount.label("outflow"),
                 OperationalLoan.released_amount.label("amount"),
+                loan_sale_id.label("sale_id"),
+                OperationalLoan.released_amount.label("released_amount"),
+                loan_continuity_type.label("continuity_type"),
+                loan_continuity_role.label("continuity_role"),
                 literal("operational_loans").label("origin"),
                 loan_sale_id.label("source_record_id"),
+                OperationalLoan.current_source_batch_id.label("source_batch_id"),
                 (literal("/vendas/") + loan_sale_id).label("detail_path"),
                 func.coalesce(
                     OperationalLoan.operational_status,
@@ -623,6 +681,12 @@ class TreasuryRepository:
         )
 
         revenue_id = cast(OperationalRevenueSnapshot.revenue_identity_id, String)
+        revenue_sale_id = literal("sale:") + cast(
+            OperationalSaleSnapshot.sale_identity_id, String
+        )
+        revenue_continuity_type, revenue_continuity_role = continuity_state(
+            OperationalSaleSnapshot.sale_identity_id
+        )
         revenue_reference = func.coalesce(
             OperationalInstallment.source_key,
             literal("Receita #") + revenue_id,
@@ -658,11 +722,16 @@ class TreasuryRepository:
                 OperationalInstallment.paid_amount.label("inflow"),
                 zero.label("outflow"),
                 OperationalInstallment.paid_amount.label("amount"),
+                revenue_sale_id.label("sale_id"),
+                OperationalContract.released_amount.label("released_amount"),
+                revenue_continuity_type.label("continuity_type"),
+                revenue_continuity_role.label("continuity_role"),
                 literal("operational_installments").label("origin"),
                 revenue_id.label("source_record_id"),
-                (
-                    literal("/receita/") + cast(OperationalInstallment.id, String)
-                ).label("detail_path"),
+                OperationalInstallment.current_source_batch_id.label("source_batch_id"),
+                (literal("/receita/") + cast(OperationalInstallment.id, String)).label(
+                    "detail_path"
+                ),
                 func.coalesce(
                     OperationalInstallment.installment_status,
                     OperationalInstallment.data_quality_status,
@@ -676,6 +745,14 @@ class TreasuryRepository:
             .outerjoin(
                 OperationalContract,
                 OperationalContract.id == OperationalInstallment.contract_id,
+            )
+            .outerjoin(
+                OperationalSaleSnapshot,
+                and_(
+                    OperationalSaleSnapshot.promotion_id
+                    == OperationalInstallment.promotion_id,
+                    OperationalSaleSnapshot.contract_id == OperationalInstallment.contract_id,
+                ),
             )
             .outerjoin(
                 OperationalClient,
@@ -709,8 +786,13 @@ class TreasuryRepository:
             inflow=row["inflow"],
             outflow=row["outflow"],
             amount=row["amount"],
+            sale_id=row["sale_id"],
+            released_amount=row["released_amount"],
+            continuity_type=row["continuity_type"],
+            continuity_role=row["continuity_role"],
             origin=row["origin"],
             source_record_id=row["source_record_id"],
+            source_batch_id=row["source_batch_id"],
             detail_path=row["detail_path"],
             status=row["source_status"],
             validation_status=row["validation_status"] or "PENDING",
@@ -719,6 +801,7 @@ class TreasuryRepository:
             observed_date=row["observed_date"],
             difference_amount=row["difference_amount"],
             bank_reference=row["bank_reference"],
+            bank_code=row["bank_code"],
             validated_at=row["validated_at"],
             validated_by=row["validated_by"],
             validation_justification=row["validation_justification"],
@@ -766,8 +849,7 @@ class TreasuryRepository:
                             == OperationalSaleSnapshot.sale_identity_id,
                             OperationalDebtContinuity.predecessor_sale_identity_id
                             != OperationalDebtContinuity.successor_sale_identity_id,
-                            OperationalDebtContinuity.status
-                            == "RENEGOTIATION_CONFIRMED",
+                            OperationalDebtContinuity.status == "RENEGOTIATION_CONFIRMED",
                             OperationalDebtContinuity.has_new_disbursement.is_(False),
                         )
                     )
@@ -794,8 +876,7 @@ class TreasuryRepository:
                             == OperationalSaleSnapshot.sale_identity_id,
                             OperationalDebtContinuity.predecessor_sale_identity_id
                             != OperationalDebtContinuity.successor_sale_identity_id,
-                            OperationalDebtContinuity.status
-                            == "RENEGOTIATION_CONFIRMED",
+                            OperationalDebtContinuity.status == "RENEGOTIATION_CONFIRMED",
                             OperationalDebtContinuity.has_new_disbursement.is_(False),
                         )
                     ),
@@ -884,6 +965,7 @@ def contribution_movement(
         amount=contribution.original_amount,
         origin="funding_contributions",
         source_record_id=str(contribution.id),
+        source_batch_id=None,
         detail_path=f"/cadastro/aportes/{contribution.id}",
         status=contribution.status,
     )
@@ -899,9 +981,7 @@ def validation_outcome(
     difference = observed - expected
     status = "VALIDATED" if difference == ZERO else "DIVERGENT"
     if status == "DIVERGENT" and not justification:
-        raise TreasuryConflictError(
-            "Justificativa é obrigatória para uma validação divergente."
-        )
+        raise TreasuryConflictError("Justificativa é obrigatória para uma validação divergente.")
     return expected, observed, difference, status
 
 
@@ -913,14 +993,11 @@ def sale_movement(
     canonical_identity_id: UUID | None = None,
 ) -> TreasuryMovementResponse:
     legacy_sale_id = f"{'loan' if orphan else 'contract'}:{sale.id}"
-    sale_id = (
-        f"sale:{canonical_identity_id}" if canonical_identity_id else legacy_sale_id
-    )
+    sale_id = f"sale:{canonical_identity_id}" if canonical_identity_id else legacy_sale_id
     amount = sale.released_amount
     identity = sale.contract_code or sale_id
-    description = (
-        f"Liberação da Venda {identity}"
-        + (f" para {client.name}" if client and client.name else "")
+    description = f"Liberação da Venda {identity}" + (
+        f" para {client.name}" if client and client.name else ""
     )
     return TreasuryMovementResponse(
         id=sale_id if canonical_identity_id else f"sale:{sale_id}",
@@ -935,8 +1012,11 @@ def sale_movement(
         inflow=ZERO,
         outflow=amount,
         amount=amount,
+        sale_id=sale_id if canonical_identity_id else None,
+        released_amount=amount,
         origin="operational_loans" if orphan else "operational_contracts",
         source_record_id=sale_id,
+        source_batch_id=sale.current_source_batch_id,
         detail_path=f"/vendas/{sale_id}",
         status=sale.operational_status or sale.data_quality_status,
     )
@@ -972,8 +1052,10 @@ def revenue_movement(
         inflow=amount,
         outflow=ZERO,
         amount=amount,
+        released_amount=contract.released_amount if contract is not None else None,
         origin="operational_installments",
         source_record_id=str(canonical_identity_id or installment.id),
+        source_batch_id=installment.current_source_batch_id,
         detail_path=f"/receita/{installment.id}",
         status=installment.installment_status or installment.data_quality_status,
     )
@@ -988,23 +1070,14 @@ def filter_treasury_movements(
         movement
         for movement in movements
         if (query.movement_type is None or movement.movement_type == query.movement_type)
-        and (
-            query.investor_id is None
-            or movement.investor_id == query.investor_id
-        )
+        and (query.investor_id is None or movement.investor_id == query.investor_id)
         and (
             query.period_from is None
-            or (
-                movement.movement_date is not None
-                and movement.movement_date >= query.period_from
-            )
+            or (movement.movement_date is not None and movement.movement_date >= query.period_from)
         )
         and (
             query.period_to is None
-            or (
-                movement.movement_date is not None
-                and movement.movement_date <= query.period_to
-            )
+            or (movement.movement_date is not None and movement.movement_date <= query.period_to)
         )
         and (
             not search
@@ -1022,8 +1095,7 @@ def filter_treasury_movements(
             ).casefold()
         )
         and (
-            query.validation_status is None
-            or movement.validation_status == query.validation_status
+            query.validation_status is None or movement.validation_status == query.validation_status
         )
     ]
 
@@ -1051,21 +1123,11 @@ def summarize_treasury_movements(
         sale_count=sum(item.movement_type == "SALE" for item in movements),
         undated_movement_count=sum(item.movement_date is None for item in movements),
         unknown_amount_count=sum(item.amount is None for item in movements),
-        pending_validation_count=sum(
-            item.validation_status == "PENDING" for item in movements
-        ),
-        validated_count=sum(
-            item.validation_status == "VALIDATED" for item in movements
-        ),
-        divergent_count=sum(
-            item.validation_status == "DIVERGENT" for item in movements
-        ),
+        pending_validation_count=sum(item.validation_status == "PENDING" for item in movements),
+        validated_count=sum(item.validation_status == "VALIDATED" for item in movements),
+        divergent_count=sum(item.validation_status == "DIVERGENT" for item in movements),
         net_difference_amount=sum(
-            (
-                item.difference_amount
-                for item in movements
-                if item.difference_amount is not None
-            ),
+            (item.difference_amount for item in movements if item.difference_amount is not None),
             start=ZERO,
         ),
     )

@@ -98,7 +98,8 @@ def test_validation_filter_is_applied_in_sql_before_pagination() -> None:
 
 def test_operational_validation_projection_uses_real_shared_identities_and_fields() -> None:
     repository = TreasuryRepository(None)  # type: ignore[arg-type]
-    sql = str(repository._movement_union().compile(compile_kwargs={"literal_binds": True}))
+    union = repository._movement_union()
+    sql = str(union.compile(compile_kwargs={"literal_binds": True}))
     assert "sale:" in sql
     assert "operational_sale_snapshots" in sql
     assert "contract:" not in sql and "loan:" not in sql
@@ -110,6 +111,25 @@ def test_operational_validation_projection_uses_real_shared_identities_and_field
     assert "installment_code" in sql
     assert "data_quality_status" in sql
     assert "funding_status" in sql
+    assert {"sale_id", "released_amount", "continuity_type", "continuity_role"}.issubset(
+        union.selected_columns.keys()
+    )
+
+
+def test_revenue_exposes_canonical_sale_continuity_without_turning_receipt_into_release() -> None:
+    source = inspect.getsource(TreasuryRepository._movement_union)
+    repository = TreasuryRepository(None)  # type: ignore[arg-type]
+    sql = str(repository._movement_union().compile(compile_kwargs={"literal_binds": True}))
+
+    assert 'OperationalInstallment.paid_amount.label("amount")' in source
+    assert 'OperationalContract.released_amount.label("released_amount")' in source
+    assert 'OperationalInstallment.paid_amount.label("released_amount")' not in source
+    assert 'revenue_sale_id.label("sale_id")' in source
+    assert '"REFIN_CONFIRMED"' in source
+    assert '"RENEGOTIATION_CONFIRMED"' in source
+    assert "OperationalDebtContinuity.updated_at.desc()" in source
+    assert "operational_debt_continuities" in sql
+    assert "operational_sale_snapshots" in sql
 
 
 def test_revenue_eligibility_and_installment_filter_are_applied_in_sql() -> None:

@@ -5,7 +5,9 @@ from app.models.base import Base
 from app.models.debt import (
     OperationalDebtContinuity,
     OperationalDebtContinuityAuditEvent,
+    OperationalDebtContinuityPredecessor,
     OperationalDebtFundingContinuity,
+    OperationalDebtRefinancedInstallment,
 )
 from app.models.funding import (
     FundingAllocation,
@@ -53,7 +55,9 @@ __all__ = [
     "Base",
     "OperationalDebtContinuity",
     "OperationalDebtContinuityAuditEvent",
+    "OperationalDebtContinuityPredecessor",
     "OperationalDebtFundingContinuity",
+    "OperationalDebtRefinancedInstallment",
     "FundingAuditEvent",
     "FundingAllocation",
     "FundingContribution",

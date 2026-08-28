@@ -56,7 +56,14 @@ export function formatDateTime(value: string): string {
 }
 
 export function formatPercent(value: string): string {
-  return `${value.replace(".", ",")}%`;
+  return formatPercentage(value);
+}
+
+export function formatPercentage(value: string | null | undefined, suffix = "%"): string {
+  if (value === null || value === undefined || value.trim() === "") return "Não informado";
+  const parsed = Number(value.replace(",", "."));
+  if (!Number.isFinite(parsed)) return value;
+  return `${new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 4 }).format(parsed)}${suffix}`;
 }
 
 export function maskDocument(value: string): string {

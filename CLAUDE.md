@@ -37,6 +37,14 @@ Leia `PLANO_SISTEMA_FUNDING_REMO.md` antes de alterar o sistema.
 
 ## Estado atual
 
+Atualização oficial de 27/08/2026: a Promotion #3 / batch #4 é o baseline
+operacional vigente. Ela foi criada intencionalmente pela equipe durante testes
+controlados; não investigar, reverter ou substituir sem autorização expressa.
+
+Na tela de Receita, a inadimplência permanece calculada por `PMT vencida / PMT
+aberta`. Esta é uma **REGRA PROVISÓRIA** até confirmação futura da REMO; não
+alterar a fórmula sem nova decisão explícita.
+
 A Fase 0, o diagnóstico técnico da Fase 1A e a Fase 1B estão concluídos. Duas
 sincronizações reais controladas foram executadas. O batch 1 é evidência
 imutável e o batch 2 é a referência operacional aprovada. O frontend permanece

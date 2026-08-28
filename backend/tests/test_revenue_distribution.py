@@ -25,6 +25,7 @@ from app.services.funding.revenue import (
     RevenueContext,
     RevenueDistributionRepository,
     RevenueState,
+    _components,
     _composition_hash,
     _primary_source,
     allocate_component,
@@ -64,6 +65,7 @@ def revenue_context(
     interest: str = "100.00",
     discount: str = "10.00",
     sale_id: str | None = "contract:10",
+    paid: str | None = None,
 ) -> RevenueContext:
     installment = OperationalInstallment(
         id=55,
@@ -71,6 +73,7 @@ def revenue_context(
         principal_component=Decimal(principal),
         interest_component=Decimal(interest),
         discount_amount=Decimal(discount),
+        paid_amount=Decimal(paid) if paid is not None else None,
     )
     return RevenueContext(
         installment=installment,
@@ -232,6 +235,47 @@ async def test_distribution_snapshots_components_and_creates_only_principal_retu
     original_snapshot = items[0].allocation_amount
     rows[0][0].amount = Decimal("1.00")
     assert items[0].allocation_amount == original_snapshot
+
+
+@pytest.mark.asyncio
+async def test_partial_payment_distributes_cash_and_returns_only_realized_principal() -> None:
+    class CreateRepository(RevenueDistributionRepository):
+        async def _next_version(self, revenue_id: int) -> int:
+            return 1
+
+    session = RecordingSession()
+    repository = CreateRepository(session)  # type: ignore[arg-type]
+    context = revenue_context(
+        principal="250.00",
+        interest="50.00",
+        discount="0.00",
+        paid="200.00",
+    )
+    rows = [allocation_row(0, "20000.00")]
+    state = RevenueState("READY", "COMPLETE", None, rows, Decimal("20000.00"))
+
+    assert _components(context.installment) == {
+        "principal": Decimal("150.00"),
+        "interest": Decimal("50.00"),
+        "discount": Decimal("0.00"),
+    }
+    distribution = await repository._create_distribution(
+        context,
+        state,
+        RevenueDistributionProcess(actor="Operador", notes=None),
+    )
+    returns = [value for value in session.added if isinstance(value, FundingLedgerEntry)]
+
+    assert distribution.distributed_principal == Decimal("150.00")
+    assert distribution.distributed_interest == Decimal("50.00")
+    assert (
+        distribution.distributed_principal
+        + distribution.distributed_interest
+        - distribution.distributed_discount
+        == Decimal("200.00")
+    )
+    assert [entry.amount for entry in returns] == [Decimal("150.00")]
+    assert all(entry.entry_type == "PRINCIPAL_RETURN" for entry in returns)
 
 
 def test_composition_hash_changes_when_sale_composition_changes() -> None:

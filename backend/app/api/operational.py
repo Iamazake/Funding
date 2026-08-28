@@ -17,6 +17,7 @@ from app.services.operational.read import (
 router = APIRouter(prefix="/api/operational", tags=["operational"])
 QualityFilter = Literal["VALID", "WARNING", "DIVERGENT", "INVALID"]
 SortOrder = Literal["asc", "desc"]
+RevenueView = Literal["all", "received", "open", "overdue", "future"]
 
 
 def get_operational_repository(
@@ -82,8 +83,9 @@ async def list_revenue(
     payment_from: date | None = None,
     payment_to: date | None = None,
     quality: QualityFilter | None = None,
-    sort_by: str = "due_date",
-    sort_order: SortOrder = "desc",
+    view: RevenueView = "all",
+    sort_by: str = "operational_relevance",
+    sort_order: SortOrder = "asc",
 ) -> RevenuePage:
     return await repository.list_revenue(
         RevenueQuery(
@@ -98,6 +100,7 @@ async def list_revenue(
             payment_from=payment_from,
             payment_to=payment_to,
             quality=quality,
+            view=view,
             sort_by=sort_by,
             sort_order=sort_order,
         )

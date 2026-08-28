@@ -402,7 +402,7 @@ class FundingLedgerRepository:
                 .order_by(FundingAllocation.effective_date, FundingAllocation.created_at)
             )
         ).all()
-        if direct or sale.funding_origin_sale_identity_id is None:
+        if sale.funding_origin_sale_identity_id is None:
             return [(*row, None) for row in direct]
         inherited = (
             await self._session.execute(
@@ -434,18 +434,26 @@ class FundingLedgerRepository:
                 .order_by(OperationalDebtFundingContinuity.origin_allocation_id)
             )
         ).all()
-        return [
+        inherited_rows = [
             (allocation, source, contribution, investor, continuity.rolled_amount)
             for continuity, allocation, source, contribution, investor in inherited
         ]
+        return [(*row, None) for row in direct] + inherited_rows
 
     def _composition_response(self, sale: FundingSale, rows) -> SaleCompositionResponse:
         active = [row for row in rows if row[0].status == "ACTIVE"]
+        funding_active = (
+            [row for row in active if len(row) < 5 or row[4] is None]
+            if sale.has_new_disbursement
+            else active
+        )
         identified = sum(
-            (_allocation_row_amount(row) for row in active),
+            (_allocation_row_amount(row) for row in funding_active),
             start=ZERO,
         )
-        status, difference = funding_status(sale.released_amount, identified, bool(active))
+        status, difference = funding_status(
+            sale.released_amount, identified, bool(funding_active)
+        )
         allocations = [
             self._allocation_response(
                 *row[:4],
@@ -469,7 +477,7 @@ class FundingLedgerRepository:
             identified_amount=identified,
             difference=difference,
             funding_status=status,
-            source_count=len(active),
+            source_count=len(funding_active),
             allocations=allocations,
             has_new_disbursement=sale.has_new_disbursement,
             funding_origin_sale_id=(

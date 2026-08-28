@@ -9,6 +9,7 @@ import { KpiCard } from "@/components/common/KpiCard";
 import { PageHeader } from "@/components/common/PageHeader";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { OperationalBankValidationPage } from "@/components/funding/OperationalBankValidationPage";
+import { RefinancingModal, type RefinancingFormInput } from "@/components/funding/RefinancingModal";
 import { RemoCapitalEntryModal, type RemoCapitalInput } from "@/components/funding/RemoCapitalEntryModal";
 import { SaleFundingAllocationModal, type SaleAllocationInput } from "@/components/funding/SaleFundingAllocationModal";
 import { Button } from "@/components/ui/button";
@@ -17,9 +18,11 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useAsyncData } from "@/hooks/useAsyncData";
-import { formatDate } from "@/lib/formatters";
-import { formatOperationalMoney, formatRate } from "@/lib/operationalFormat";
+import { useAuth } from "@/contexts/AuthContext";
+import { formatDate, formatPercentage } from "@/lib/formatters";
+import { formatOperationalMoney, formatOperationalRate } from "@/lib/operationalFormat";
 import { fundingApi } from "@/services/fundingApi";
+import { debtContinuityApi } from "@/services/debtContinuityApi";
 import { collectionView, getSale, getSales } from "@/services/operationalApi";
 import type { FundingAllocation, SaleFundingComposition } from "@/types/fundingApi";
 import type { QualityMessage, SaleItem, SalesFilters } from "@/types/operational";
@@ -61,38 +64,23 @@ export function SalesPage({ navigate }: { navigate: (path: string) => void }) {
 }
 
 function SalesTable({ items, navigate }: { items: SaleItem[]; navigate: (path: string) => void }) {
-  const compactCell = "whitespace-nowrap px-3";
-  return <Card className="overflow-hidden bg-card/75">
-    <Table className="min-w-[1160px]">
-      <TableHeader><TableRow>
-        <TableHead className="w-[230px] px-3">Contrato / cliente</TableHead>
-        <TableHead className="px-3">Operação</TableHead>
-        <TableHead className="px-3">Liberação</TableHead>
-        <TableHead className="px-3">Prazo</TableHead>
-        <TableHead className="px-3">Principal</TableHead>
-        <TableHead className="px-3">Liberado</TableHead>
-        <TableHead className="px-3">Taxa</TableHead>
-        <TableHead className="px-3">Status</TableHead>
-        <TableHead className="px-3">Qualidade</TableHead>
-        <TableHead className="px-3">Funding</TableHead>
-      </TableRow></TableHeader>
-      <TableBody>{items.map((row) => <TableRow key={row.id} className="cursor-pointer" onClick={() => navigate(`/vendas/${row.id}`)}>
-        <TableCell className="w-[230px] px-3"><AppLink to={`/vendas/${row.id}`} onNavigate={navigate} className="font-semibold text-primary">{row.contract_code ?? "Contrato não informado"}</AppLink><p className="max-w-[210px] text-xs text-muted-foreground">{row.client_name ?? `Cliente não resolvido · ${row.source_client_code ?? "sem código"}`}</p></TableCell>
-        <TableCell className={compactCell}>{formatDate(row.operation_date)}</TableCell>
-        <TableCell className={compactCell}>{formatDate(row.release_date)}</TableCell>
-        <TableCell className={compactCell}>{row.term ?? "—"}</TableCell>
-        <TableCell className={compactCell}>{formatOperationalMoney(row.principal)}</TableCell>
-        <TableCell className={compactCell}>{formatOperationalMoney(row.released_amount)}</TableCell>
-        <TableCell className={compactCell}>{formatRate(row.interest_rate)}</TableCell>
-        <TableCell className={compactCell}><StatusBadge status={row.status ?? "NÃO INFORMADO"} /></TableCell>
-        <TableCell className={compactCell}><QualityIndicator row={row} /></TableCell>
-        <TableCell className="min-w-[150px] px-3"><FundingCell row={row} /></TableCell>
-      </TableRow>)}</TableBody>
-    </Table>
-  </Card>;
+  return <>
+    <div className="hidden md:block"><Card className="overflow-hidden bg-card/75"><Table className="min-w-[1040px]"><TableHeader><TableRow><TableHead className="w-[250px]">Cliente / contrato</TableHead><TableHead>Operação</TableHead><TableHead className="text-right">Valor</TableHead><TableHead>Taxa</TableHead><TableHead>Prazo</TableHead><TableHead>Funding</TableHead><TableHead>Validação</TableHead><TableHead>Status / qualidade</TableHead></TableRow></TableHeader><TableBody>{items.map((row) => <TableRow key={row.id} className="cursor-pointer" onClick={() => navigate(`/vendas/${row.id}`)}><TableCell><SaleIdentity row={row} navigate={navigate} /></TableCell><TableCell className="whitespace-nowrap">{formatDate(row.operation_date)}<p className="text-xs text-muted-foreground">Liberação {formatDate(row.release_date)}</p></TableCell><TableCell className="whitespace-nowrap text-right"><strong className="tabular-nums">{formatOperationalMoney(row.released_amount)}</strong><p className="text-xs text-muted-foreground">Principal {formatOperationalMoney(row.principal)}</p></TableCell><TableCell className="whitespace-nowrap font-medium" title="Taxa de juros mensal">{formatOperationalRate(row.interest_rate, true)}</TableCell><TableCell className="whitespace-nowrap">{row.term ? `${row.term} meses` : "—"}</TableCell><TableCell className="min-w-[150px]"><FundingCell row={row} /></TableCell><TableCell><StatusBadge status={row.bank_validation_status} /></TableCell><TableCell className="space-y-1.5"><StatusBadge status={row.status ?? "NÃO INFORMADO"} /><QualityIndicator row={row} /></TableCell></TableRow>)}</TableBody></Table></Card></div>
+    <div className="grid gap-4 md:hidden">{items.map((row) => <Card key={row.id} className="bg-card/75"><CardContent className="space-y-4 p-4"><div className="flex items-start justify-between gap-3"><SaleIdentity row={row} navigate={navigate} /><StatusBadge status={row.bank_validation_status} /></div><div className="grid grid-cols-2 gap-3 text-sm"><SaleMetric label="Valor liberado" value={formatOperationalMoney(row.released_amount)} emphasized /><SaleMetric label="Taxa mensal" value={formatOperationalRate(row.interest_rate, true)} /><SaleMetric label="Operação" value={formatDate(row.operation_date)} /><SaleMetric label="Funding" value={row.funding_status === "NOT_INFORMED" ? "Não informado" : row.funding_status} /></div><div className="flex flex-wrap items-center gap-2"><StatusBadge status={row.status ?? "NÃO INFORMADO"} /><QualityIndicator row={row} /></div></CardContent></Card>)}</div>
+  </>;
+}
+
+function SaleIdentity({ row, navigate }: { row: SaleItem; navigate: (path: string) => void }) {
+  const client = row.client_name?.trim() || "Não informado";
+  return <div className="min-w-0"><p className="max-w-[230px] truncate font-semibold" title={client}>{client}</p><AppLink to={`/vendas/${row.id}`} onNavigate={navigate} className="block max-w-[230px] truncate text-xs text-primary" title={row.contract_code ?? undefined}>{row.contract_code ?? "Contrato não informado"}</AppLink></div>;
+}
+
+function SaleMetric({ label, value, emphasized = false }: { label: string; value: string; emphasized?: boolean }) {
+  return <div><p className="text-xs text-muted-foreground">{label}</p><p className={emphasized ? "font-semibold tabular-nums" : "font-medium"}>{value}</p></div>;
 }
 
 export function SalesDetailPage({ id, navigate }: { id: string; navigate: (path: string) => void }) {
+  const { user } = useAuth();
   const loader = useCallback(async () => {
     const row = await getSale(id);
     const [composition, sources] = await Promise.all([fundingApi.getSaleComposition(id), fundingApi.listSources()]);
@@ -100,35 +88,40 @@ export function SalesDetailPage({ id, navigate }: { id: string; navigate: (path:
     return { row, composition, sources, balances };
   }, [id]);
   const { state, reload } = useAsyncData(loader);
-  const [allocationOpen, setAllocationOpen] = useState(false); const [remoOpen, setRemoOpen] = useState(false); const [saving, setSaving] = useState(false); const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const [allocationOpen, setAllocationOpen] = useState(false); const [remoOpen, setRemoOpen] = useState(false); const [refinOpen, setRefinOpen] = useState(false); const [saving, setSaving] = useState(false); const [feedback, setFeedback] = useState<Feedback | null>(null);
   if (state.status === "loading") return <LoadingState label="Carregando venda e composição real…" />;
   if (state.status === "error") return <ErrorState message={state.error} onRetry={reload} />;
   const { row, composition, sources, balances } = state.data;
   const createAllocation = async (input: SaleAllocationInput) => { setSaving(true); try { await fundingApi.createAllocation(id, input); setAllocationOpen(false); setFeedback({ tone: "success", message: "Fonte adicionada e ledger registrado atomicamente." }); reload(); } catch (error) { setFeedback({ tone: "error", message: error instanceof Error ? error.message : "Falha ao adicionar fonte." }); } finally { setSaving(false); } };
   const registerRemo = async (input: RemoCapitalInput) => { setSaving(true); try { await fundingApi.registerRemoCapital(input); setRemoOpen(false); setFeedback({ tone: "success", message: "Capital REMO registrado no ledger." }); reload(); } catch (error) { setFeedback({ tone: "error", message: error instanceof Error ? error.message : "Falha ao registrar capital REMO." }); } finally { setSaving(false); } };
   const reverse = async (allocation: FundingAllocation) => { const reason = window.prompt("Motivo da reversão da alocação:"); if (!reason?.trim()) return; setSaving(true); try { await fundingApi.reverseAllocation(allocation.id, { reason: reason.trim() }); setFeedback({ tone: "success", message: "Alocação revertida por evento compensatório." }); reload(); } catch (error) { setFeedback({ tone: "error", message: error instanceof Error ? error.message : "Falha ao reverter alocação." }); } finally { setSaving(false); } };
+  const correctRefinancing = async (input: RefinancingFormInput) => { if (!row.continuity_id) return; setSaving(true); try { await debtContinuityApi.correctRefinancing(row.continuity_id, { successor_contract_code: input.successorContractCode, effective_date: input.effectiveDate, notes: input.notes }); setRefinOpen(false); setFeedback({ tone: "success", message: "Vínculo REFIN corrigido com registro de auditoria." }); reload(); } catch (error) { setFeedback({ tone: "error", message: error instanceof Error ? error.message : "Falha ao corrigir REFIN." }); } finally { setSaving(false); } };
+  const isRenegotiation = row.continuity_type === "RENEGOTIATION" || row.continuity_type === "ROLLOVER";
   return <div className="space-y-6">
     <AppLink to="/vendas" onNavigate={navigate} className="inline-flex items-center gap-2 text-sm text-muted-foreground"><ArrowLeft className="size-4" />Voltar para Vendas</AppLink>
-    <PageHeader eyebrow="Venda operacional" title={row.contract_code ?? "Contrato não informado"} description={row.client_name ?? "Cliente não resolvido na promoção atual."} actions={<><StatusBadge status={row.data_quality_status} /><StatusBadge status={composition.funding_status} /></>} />
+    <PageHeader eyebrow="Venda operacional" title={row.contract_code ?? "Contrato não informado"} description={row.client_name ?? "Não informado"} actions={<><StatusBadge status={row.data_quality_status} />{row.continuity_role && <StatusBadge status={isRenegotiation ? "RENEGOTIATION_CONFIRMED" : "REFIN"} />}<StatusBadge status={composition.funding_status} /></>} />
     <FeedbackBanner feedback={feedback} onClose={() => setFeedback(null)} />
+    {row.continuity_role === "PREDECESSOR" && <Card className="border-cyan-400/30 bg-cyan-400/5"><CardContent className="flex flex-wrap items-center gap-3 p-5"><StatusBadge status={isRenegotiation ? "RENEGOTIATION_CONFIRMED" : "REFIN_CONFIRMED"} /><span>{isRenegotiation ? "Renegociado para →" : "Refinanciado para →"}</span>{row.successor_sale_id ? <AppLink to={`/vendas/${row.successor_sale_id}`} onNavigate={navigate} className="font-semibold text-primary">Contrato {row.successor_contract_code ?? row.successor_sale_id}</AppLink> : <strong>Contrato {row.successor_contract_code ?? "não informado"}</strong>}{user?.role === "ADMIN" && !isRenegotiation && <Button className="ml-auto" size="sm" variant="outline" onClick={() => setRefinOpen(true)}>Corrigir vínculo</Button>}</CardContent></Card>}
+    {row.continuity_role === "SUCCESSOR" && <Card className="border-cyan-400/30 bg-cyan-400/5"><CardContent className="flex flex-wrap items-center gap-3 p-5"><StatusBadge status={isRenegotiation ? "RENEGOTIATION_CONFIRMED" : "REFIN"} /><span>{isRenegotiation ? "Renegociado de" : "Refinanciado de"}</span>{row.predecessor_sale_id ? <AppLink to={`/vendas/${row.predecessor_sale_id}`} onNavigate={navigate} className="font-semibold text-primary">contrato {row.predecessor_contract_code ?? row.predecessor_sale_id}</AppLink> : <strong>contrato {row.predecessor_contract_code ?? "não informado"}</strong>}</CardContent></Card>}
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><KpiCard compact icon={Banknote} label="Valor da operação" value={formatOperationalMoney(composition.operation_amount)} helper="Campo: valor liberado" /><KpiCard compact icon={WalletCards} label="Funding identificado" value={formatOperationalMoney(composition.identified_amount)} /><KpiCard compact icon={AlertTriangle} label="Diferença" value={formatOperationalMoney(composition.difference)} /><KpiCard compact icon={Landmark} label="Fontes ativas" value={String(composition.source_count)} /></div>
     <FundingCompositionPanel composition={composition} saving={saving} onAdd={() => setAllocationOpen(true)} onRegisterRemo={() => setRemoOpen(true)} onReverse={reverse} />
-    <InfoGrid rows={[["Código do cliente", row.source_client_code ?? "Não informado"], ["Data da operação", formatDate(row.operation_date)], ["Data de liberação", formatDate(row.release_date)], ["Primeiro vencimento", formatDate(row.first_due_date)], ["Prazo", row.term ? `${row.term} meses` : "Não informado"], ["Principal", formatOperationalMoney(row.principal)], ["IOF", formatOperationalMoney(row.iof)], ["Valor financiado", formatOperationalMoney(row.financed_amount)], ["Valor liberado", formatOperationalMoney(row.released_amount)], ["Parcela (PMT)", formatOperationalMoney(row.installment_amount)], ["Taxa de juros", formatRate(row.interest_rate)], ["TIR", formatRate(row.irr_rate)], ["CET mensal", formatRate(row.cet_monthly_rate)], ["Status", row.status ?? "Não informado"]]} />
+    <InfoGrid rows={[["Código de Contrato", row.contract_code ?? "Não informado"], ["Data da operação", formatDate(row.operation_date)], ["Data de liberação", formatDate(row.release_date)], ["Primeiro vencimento", formatDate(row.first_due_date)], ["Prazo", row.term ? `${row.term} meses` : "Não informado"], ["Principal", formatOperationalMoney(row.principal)], ["IOF", formatOperationalMoney(row.iof)], ["Valor financiado", formatOperationalMoney(row.financed_amount)], ["Valor liberado", formatOperationalMoney(row.released_amount)], ["Parcela (PMT)", formatOperationalMoney(row.installment_amount)], ["Taxa de juros mensal", formatOperationalRate(row.interest_rate, true)], ["TIR", formatOperationalRate(row.irr_rate)], ["CET mensal", formatOperationalRate(row.cet_monthly_rate, true)], ["Status", row.status ?? "Não informado"]]} />
     <QualityPanel warnings={row.warnings} divergences={row.divergences} />
     <SaleFundingAllocationModal open={allocationOpen} sources={sources} historicalBalances={balances} saving={saving} onClose={() => setAllocationOpen(false)} onSave={createAllocation} />
     <RemoCapitalEntryModal open={remoOpen} saving={saving} onClose={() => setRemoOpen(false)} onSave={registerRemo} />
+    <RefinancingModal open={refinOpen} predecessorContractCode={row.contract_code} initialSuccessorContractCode={row.successor_contract_code ?? ""} correction saving={saving} onClose={() => setRefinOpen(false)} onSave={correctRefinancing} />
   </div>;
 }
 
 function FundingCompositionPanel({ composition, saving, onAdd, onRegisterRemo, onReverse }: { composition: SaleFundingComposition; saving: boolean; onAdd: () => void; onRegisterRemo: () => void; onReverse: (allocation: FundingAllocation) => void }) {
   const active = composition.allocations.filter((item) => item.status === "ACTIVE");
-  return <Card className="overflow-hidden bg-card/75"><CardHeader className="flex-row items-center justify-between"><div><CardTitle className="text-base">Composição real do Funding</CardTitle><p className="mt-1 text-sm text-muted-foreground">Saldo validado em {formatDate(composition.operation_date)}. Percentual derivado do valor alocado.</p></div><div className="flex gap-2"><Button variant="outline" onClick={onRegisterRemo}>Capital REMO</Button><Button onClick={onAdd}><Plus className="size-4" />Adicionar fonte</Button></div></CardHeader><CardContent className="p-0">{active.length === 0 ? <div className="p-6"><EmptyState title="Funding ainda não informado." description="Adicione uma ou mais fontes reais; composição incompleta é permitida." /></div> : <Table><TableHeader><TableRow><TableHead>Fonte</TableHead><TableHead>Investidor / aporte</TableHead><TableHead>Valor alocado</TableHead><TableHead>Participação</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Correção</TableHead></TableRow></TableHeader><TableBody>{composition.allocations.map((allocation) => <TableRow key={allocation.id} className={allocation.status === "REVERSED" ? "opacity-50" : ""}><TableCell>{allocation.source_type === "REMO_CAPITAL" ? "Capital próprio REMO" : "Aporte de investidor"}</TableCell><TableCell>{allocation.investor_name ?? "REMO"}<p className="text-xs text-muted-foreground">{allocation.contribution_code ?? "Fonte própria"}</p></TableCell><TableCell>{formatOperationalMoney(allocation.amount)}</TableCell><TableCell>{allocation.percentage ? `${allocation.percentage.replace(".", ",")}%` : "—"}</TableCell><TableCell><StatusBadge status={allocation.status} /></TableCell><TableCell className="text-right">{allocation.status === "ACTIVE" && <Button size="sm" variant="ghost" disabled={saving} onClick={() => onReverse(allocation)}><RotateCcw className="size-4" />Reverter</Button>}</TableCell></TableRow>)}</TableBody></Table>}</CardContent></Card>;
+  return <Card className="overflow-hidden bg-card/75"><CardHeader className="flex-row items-center justify-between"><div><CardTitle className="text-base">Composição real do Funding</CardTitle><p className="mt-1 text-sm text-muted-foreground">Saldo validado em {formatDate(composition.operation_date)}. Percentual derivado do valor alocado.</p></div><div className="flex gap-2"><Button variant="outline" onClick={onRegisterRemo}>Capital REMO</Button><Button onClick={onAdd}><Plus className="size-4" />Adicionar fonte</Button></div></CardHeader><CardContent className="p-0">{active.length === 0 ? <div className="p-6"><EmptyState title="Funding ainda não informado." description="Adicione uma ou mais fontes reais; composição incompleta é permitida." /></div> : <Table><TableHeader><TableRow><TableHead>Fonte</TableHead><TableHead>Investidor / aporte</TableHead><TableHead>Valor alocado</TableHead><TableHead>Participação</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Correção</TableHead></TableRow></TableHeader><TableBody>{composition.allocations.map((allocation) => <TableRow key={allocation.id} className={allocation.status === "REVERSED" ? "opacity-50" : ""}><TableCell>{allocation.source_type === "REMO_CAPITAL" ? "Capital próprio REMO" : "Aporte de investidor"}</TableCell><TableCell>{allocation.investor_name ?? "REMO"}<p className="text-xs text-muted-foreground">{allocation.contribution_code ?? "Fonte própria"}</p></TableCell><TableCell>{formatOperationalMoney(allocation.amount)}</TableCell><TableCell>{allocation.percentage ? formatPercentage(allocation.percentage) : "—"}</TableCell><TableCell><StatusBadge status={allocation.status} /></TableCell><TableCell className="text-right">{allocation.status === "ACTIVE" && <Button size="sm" variant="ghost" disabled={saving} onClick={() => onReverse(allocation)}><RotateCcw className="size-4" />Reverter</Button>}</TableCell></TableRow>)}</TableBody></Table>}</CardContent></Card>;
 }
 
 export function SalesDivergencesPage({ navigate }: { navigate: (path: string) => void }) {
   const loader = useCallback(() => getSales({ page: 1, page_size: 100, quality: "DIVERGENT" }), []);
   const { state, reload } = useAsyncData(loader);
-  return <div className="space-y-6"><PageHeader eyebrow="Vendas" title="Divergências operacionais" description="Empréstimos sem contrato e outras divergências reais da promoção atual." />{state.status === "loading" ? <LoadingState /> : state.status === "error" ? <ErrorState message={state.error} onRetry={reload} /> : state.data.items.length === 0 ? <EmptyState /> : <Card className="overflow-hidden bg-card/75"><Table><TableHeader><TableRow><TableHead>Contrato</TableHead><TableHead>Cliente</TableHead><TableHead>Status</TableHead><TableHead>Motivos</TableHead></TableRow></TableHeader><TableBody>{state.data.items.map((row) => <TableRow key={row.id} className="cursor-pointer" onClick={() => navigate(`/vendas/${row.id}`)}><TableCell>{row.contract_code ?? "Não informado"}</TableCell><TableCell>{row.client_name ?? "Não resolvido"}</TableCell><TableCell><StatusBadge status={row.data_quality_status} /></TableCell><TableCell>{row.divergence_count} divergência(s)</TableCell></TableRow>)}</TableBody></Table></Card>}</div>;
+  return <div className="space-y-6"><PageHeader eyebrow="Vendas" title="Divergências operacionais" description="Empréstimos sem contrato e outras divergências reais da promoção atual." />{state.status === "loading" ? <LoadingState /> : state.status === "error" ? <ErrorState message={state.error} onRetry={reload} /> : state.data.items.length === 0 ? <EmptyState /> : <Card className="overflow-hidden bg-card/75"><Table><TableHeader><TableRow><TableHead>Contrato</TableHead><TableHead>Cliente</TableHead><TableHead>Status</TableHead><TableHead>Motivos</TableHead></TableRow></TableHeader><TableBody>{state.data.items.map((row) => <TableRow key={row.id} className="cursor-pointer" onClick={() => navigate(`/vendas/${row.id}`)}><TableCell>{row.contract_code ?? "Não informado"}</TableCell><TableCell>{row.client_name ?? "Não informado"}</TableCell><TableCell><StatusBadge status={row.data_quality_status} /></TableCell><TableCell>{row.divergence_count} divergência(s)</TableCell></TableRow>)}</TableBody></Table></Card>}</div>;
 }
 
 export function SalesBankValidationPage({ navigate }: { navigate: (path: string) => void }) { return <div className="space-y-6"><AppLink to="/vendas" onNavigate={navigate} className="inline-flex items-center gap-2 text-sm text-muted-foreground"><ArrowLeft className="size-4" />Voltar para Vendas</AppLink><OperationalBankValidationPage kind="SALE" navigate={navigate} /></div>; }
